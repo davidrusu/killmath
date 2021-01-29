@@ -1,6 +1,6 @@
 #![feature(iter_intersperse)]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 
@@ -208,6 +208,14 @@ impl Pattern {
             pat => pat.clone(),
         }
     }
+
+    fn complexity(&self) -> usize {
+        match self {
+            Self::Sym(s) => s.len(),
+            Self::Hole(h) => 1,
+            Self::Seq(seq) => seq.iter().map(Self::complexity).sum::<usize>() + 1,
+        }
+    }
 }
 #[derive(PartialEq, Eq, Clone, Debug)]
 enum Tok {
@@ -263,7 +271,7 @@ fn listener_prompt(
 ) {
     let ctx = &mut egui_context.ctx;
     egui::Window::new("Listener").show(ctx, |ui| {
-        let listener_resp = ui.text_edit_singleline(&mut listener_state.command);
+        let listener_resp = ui.text_edit_multiline(&mut listener_state.command);
         if (ui.button("eval").clicked || listener_resp.lost_kb_focus)
             && !listener_state.command.is_empty()
         {
@@ -284,13 +292,27 @@ fn ars(
         return;
     }
 
+    let mut spent_reductions: HashSet<Entity> = Default::default();
+
     for (pattern_entity, pattern) in free_patterns.iter() {
+	let mut candidate_reductions: Vec<(Reduction, Entity)> = Default::default();
+
         for (reduction_entity, reduction) in reductions.iter() {
+	    if spent_reductions.contains(&reduction_entity) {
+		continue;
+	    }
             if let Ok(bindings) = pattern.bind(&reduction.0) {
+		candidate_reductions.push((reduction.clone(), reduction_entity));
+	    }
+	}
+	candidate_reductions.sort_by(|(r_a, _), (r_b, _)| r_a.0 .complexity().cmp(&r_b.0 .complexity()));
+	if let Some((reduction, reduction_entity)) = candidate_reductions.pop() {
+	    if let Ok(bindings) = pattern.bind(&reduction.0) {
                 println!("Bindings {:?}", bindings);
                 commands.despawn(pattern_entity);
+		spent_reductions.insert(reduction_entity);
 
-                if reduction == &macro_reduction() {
+                if reduction == macro_reduction() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
                     if bindings_map.len() != bindings.len() {
                         panic!("Unification is not supported yet");
@@ -306,7 +328,7 @@ fn ars(
                         }
                         commands.spawn((ARS, Reduction(pattern, rewrite)));
                     }
-                } else if reduction == &fork_reduction() {
+                } else if reduction == fork_reduction() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
                     if bindings_map.len() != bindings.len() {
                         panic!("Unification is not supported yet");
