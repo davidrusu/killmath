@@ -1,11 +1,16 @@
 #![feature(iter_intersperse)]
+#![feature(if_let_guard)]
 
-use std::collections::{BTreeMap, VecDeque, HashSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
+
+fn unique_hole() -> String {
+    format!("{}", rand::random::<u16>())
+}
 
 /// This example illustrates the various features of Bevy UI.
 fn main() {
@@ -18,7 +23,7 @@ fn main() {
         .add_startup_system(setup.system())
         .add_system(listener_prompt.system())
         .add_system(ars_ui.system())
-        .add_system(ars.system())
+        // .add_system(ars.system())
         .add_system(persistence.system())
         .run();
 }
@@ -176,13 +181,7 @@ impl Pattern {
                     Err(())
                 }
             }
-            (Self::Hole(a_hole), Self::Hole(b_hole)) => Ok(vec![
-                (a_hole.clone(), Self::Hole(b_hole.clone())),
-                (b_hole.clone(), Self::Hole(a_hole.clone())),
-            ]),
-            (Self::Hole(hole), pat) | (pat, Self::Hole(hole)) => {
-                Ok(vec![(hole.clone(), pat.clone())])
-            }
+            (Self::Hole(hole), pat) => Ok(vec![(hole.clone(), pat.clone())]),
             (Self::Seq(a_seq), Self::Seq(b_seq)) => {
                 if a_seq.len() != b_seq.len() {
                     Err(())
@@ -206,6 +205,22 @@ impl Pattern {
             }
             Self::Seq(seq) => Self::Seq(seq.iter().map(|p| p.apply(bindings.clone())).collect()),
             pat => pat.clone(),
+        }
+    }
+
+    fn holes(&self) -> BTreeSet<String> {
+        match self {
+            Self::Hole(hole) => vec![hole.clone()].into_iter().collect(),
+            Self::Seq(seq) => seq.iter().flat_map(|p| p.holes()).collect(),
+            pat => Default::default(),
+        }
+    }
+
+    fn rename_holes(self, mut mapping: BTreeMap<String, String>) -> Self {
+        match self {
+            Self::Hole(hole) if let Some(renamed_hole) = mapping.remove(&hole) => Self::Hole(renamed_hole),
+            Self::Seq(seq) => Self::Seq(seq.into_iter().map(|p| p.rename_holes(mapping.clone())).collect()),
+            pat => pat,
         }
     }
 
@@ -266,51 +281,70 @@ impl Tok {
 
 fn listener_prompt(
     commands: &mut Commands,
+    reductions: Query<(Entity, &Reduction), With<ARS>>,
+    free_patterns: Query<(Entity, &Pattern), With<ARS>>,
     mut listener_state: ResMut<ListenerState>,
     mut egui_context: ResMut<EguiContext>,
 ) {
     let ctx = &mut egui_context.ctx;
     egui::Window::new("Listener").show(ctx, |ui| {
         let listener_resp = ui.text_edit_multiline(&mut listener_state.command);
-        if (ui.button("eval").clicked || listener_resp.lost_kb_focus)
+        if (ui.button("parse").clicked || listener_resp.lost_kb_focus)
             && !listener_state.command.is_empty()
         {
             commands.spawn((ARS, Pattern::parse(&listener_state.command)));
             listener_state.command = Default::default();
         }
+        if ui.button("clear").clicked {
+            for (e, r) in reductions.iter() {
+                if r != &macro_reduction() && r != &fork_reduction() {
+                    commands.despawn(e);
+                }
+            }
+
+            for (e, _) in free_patterns.iter() {
+                commands.despawn(e);
+            }
+        }
+        if ui.button("step").clicked {
+            step_ars(commands, reductions, free_patterns);
+        }
     });
 }
 
-fn ars(
-    time: Res<Time>,
-    mut timer: ResMut<ARSTimer>,
+fn step_ars(
     commands: &mut Commands,
     reductions: Query<(Entity, &Reduction), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
 ) {
-    if !timer.0.tick(time.delta_seconds()).just_finished() {
-        return;
-    }
-
-    let mut spent_reductions: HashSet<Entity> = Default::default();
+    let mut spent_reductions: BTreeSet<Entity> = Default::default();
 
     for (pattern_entity, pattern) in free_patterns.iter() {
-	let mut candidate_reductions: Vec<(Reduction, Entity)> = Default::default();
+        let mut candidate_reductions: Vec<(Reduction, Entity)> = Default::default();
+
+        let pattern_holes: BTreeMap<_, _> = pattern
+            .holes()
+            .into_iter()
+            .map(|h| (h, unique_hole()))
+            .collect();
+
+        let pattern = pattern.clone().rename_holes(pattern_holes);
 
         for (reduction_entity, reduction) in reductions.iter() {
-	    if spent_reductions.contains(&reduction_entity) {
-		continue;
-	    }
-            if let Ok(bindings) = pattern.bind(&reduction.0) {
-		candidate_reductions.push((reduction.clone(), reduction_entity));
-	    }
-	}
-	candidate_reductions.sort_by(|(r_a, _), (r_b, _)| r_a.0 .complexity().cmp(&r_b.0 .complexity()));
-	if let Some((reduction, reduction_entity)) = candidate_reductions.pop() {
-	    if let Ok(bindings) = pattern.bind(&reduction.0) {
+            if spent_reductions.contains(&reduction_entity) {
+                continue;
+            }
+            if let Ok(bindings) = reduction.0.bind(&pattern) {
+                candidate_reductions.push((reduction.clone(), reduction_entity));
+            }
+        }
+        candidate_reductions
+            .sort_by(|(r_a, _), (r_b, _)| r_a.0.complexity().cmp(&r_b.0.complexity()));
+        if let Some((reduction, reduction_entity)) = candidate_reductions.pop() {
+            if let Ok(bindings) = reduction.0.bind(&pattern) {
                 println!("Bindings {:?}", bindings);
                 commands.despawn(pattern_entity);
-		spent_reductions.insert(reduction_entity);
+                spent_reductions.insert(reduction_entity);
 
                 if reduction == macro_reduction() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
@@ -338,16 +372,52 @@ fn ars(
                         bindings_map.get("left").cloned(),
                         bindings_map.get("right").cloned(),
                     ) {
+                        // let anon_holes_left: BTreeMap<_, _> = left
+                        //     .holes()
+                        //     .into_iter()
+                        //     .map(|h| (h, unique_hole()))
+                        //     .collect();
+
+                        // let anon_holes_right: BTreeMap<_, _> = right
+                        //     .holes()
+                        //     .into_iter()
+                        //     .map(|h| (h, unique_hole()))
+                        //     .collect();
+
+                        // commands.spawn((ARS, left.rename_holes(anon_holes_left)));
+                        // commands.spawn((ARS, right.rename_holes(anon_holes_right)));
                         commands.spawn((ARS, left));
                         commands.spawn((ARS, right));
                     }
                 } else {
-                    commands.spawn((ARS, reduction.1.apply(bindings)));
+                    let rewritten_pattern = reduction.1.apply(bindings);
+                    // let anon_holes: BTreeMap<_, _> = rewritten_pattern
+                    //     .holes()
+                    //     .into_iter()
+                    //     .map(|h| (h, unique_hole()))
+                    //     .collect();
+
                     commands.despawn(reduction_entity);
+                    // commands.spawn((ARS, rewritten_pattern.rename_holes(anon_holes)));
+                    commands.spawn((ARS, rewritten_pattern));
                 }
             }
         }
     }
+}
+
+fn ars(
+    time: Res<Time>,
+    mut timer: ResMut<ARSTimer>,
+    commands: &mut Commands,
+    reductions: Query<(Entity, &Reduction), With<ARS>>,
+    free_patterns: Query<(Entity, &Pattern), With<ARS>>,
+) {
+    if !timer.0.tick(time.delta_seconds()).just_finished() {
+        return;
+    }
+
+    step_ars(commands, reductions, free_patterns);
 }
 
 fn ars_ui(

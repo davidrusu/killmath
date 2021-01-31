@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 bevy = "0.4" # { git = "https://github.com/bevyengine/bevy", rev = "7166a28bafa669eac40f5864cce8a150b330dd5f" }
 bevy_egui = "0.1"
+rand = "0.8.3"

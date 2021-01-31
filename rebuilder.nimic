@@ -10,10 +10,107 @@
     [?p ?r Y [macro [?p ?r Y ?g]
       [macro ?p [fork ?r [fork [?p ?r Y ?g] ?g]]]]]]]
 
-[macro
-  [pmacro ?p ?r]
+
+[fork
+  [macro
+    [pmacro ?p ?r]
+    [fork
+      [macro [?a ?b Y ?g]
+        [macro ?a [fork ?b [fork [?p ?r Y ?g] ?g]]]]
+      [?p ?r Y
+        [macro [?c ?d Y ?h]
+          [macro ?c [fork ?d [fork [?p ?r Y ?h] ?h]]]]]]]
+  [pmacro
+    [pmacro ?q ?w]
+    [fork
+      [macro [?e ?f Y ?i]
+        [macro ?e [fork ?f [fork [?q ?w Y ?i] ?i]]]]
+      [?q ?w Y
+        [macro [?j ?k Y ?l]
+          [macro ?j [fork ?k [fork [?q ?w Y ?l] ?l]]]]]]]
+]
+
+[fork
+  [macro
+    [pmacro ?p ?r]
+    [fork
+      [macro [?a ?b Y ?g]
+        [fork [?a ?b Y ?g]
+              [macro ?a [fork ?b ?g]]]]
+      [?p ?r Y
+        [macro [?a ?b Y ?g]
+          [fork [?a ?b Y ?g]
+                [macro ?a [fork ?b ?g]]]]]]]		
+  [pmacro
+    [pmacro ?p ?r]
+    [fork
+      [macro [?a ?b Y ?g]
+        [fork [?a ?b Y ?g]
+              [macro ?a [fork ?b ?g]]]]
+      [?p ?r Y
+        [macro [?a ?b Y ?g]
+          [fork [?a ?b Y ?g]
+                [macro ?a [fork ?b ?g]]]]]]]
+]
+
+[fork
+  [macro [Y ?g] [fork ?g [Y ?g]]]
+  [Y [macro [Y ?g] [fork ?g [Y ?g]]]]
+]
+
+[fork
+  [macro
+    [pmacro ?p ?r]
+    [fork
+      [macro [?a ?b Y ?g]
+        [fork ?g
+              [macro ?a [fork ?b [?a ?b Y ?g]]]]]
+      [?p ?r Y
+        [macro [?a ?b Y ?g]
+          [fork ?g
+                [macro ?a [fork ?b [?a ?b Y ?g]]]]]]]]		
+  [pmacro
+    [pmacro ?p ?r]
+    [fork
+      [macro [?a ?b Y ?g]
+        [fork ?g
+              [macro ?a [fork ?b [?a ?b Y ?g]]]]]
+      [?p ?r Y
+        [macro [?a ?b Y ?g]
+          [fork ?g
+                [macro ?a [fork ?b [?a ?b Y ?g]]]]]]]]
+]
+
+
+macro
+  PATTERN
   [fork
-    [macro [?p ?r Y ?g]
-      [macro ?p [fork ?r [fork [?p ?r Y ?g] ?g]]]]
-    [?p ?r Y [macro [?p ?r Y ?g]
-      [macro ?p [fork ?r [fork [?p ?r Y ?g] ?g]]]]]]]
+    REWRITE
+    [fork
+      [PATTERN REWRITE Y [macro [?PAT_HOLE ?REW_HOLE Y ?G] [macro ?PAT_HOLE [fork ?REW_HOLE [fork [?PAT_HOLE ?REW_HOLE Y ?G] ?G]]]]]
+      [macro [?PAT_HOLE ?REW_HOLE Y ?G]
+        [macro ?PAT_HOLE [fork ?REW_HOLE [fork [?PAT_HOLE ?REW_HOLE Y ?G] ?G]]]]
+    ]
+  ]
+
+macro
+  [suc ?n]
+  [fork
+    ?n
+    [fork
+      [[suc ?n] ?n Y [macro [?PAT_HOLE ?REW_HOLE Y ?G] [macro ?PAT_HOLE [fork ?REW_HOLE [fork [?PAT_HOLE ?REW_HOLE Y ?G] ?G]]]]]
+      [macro [?PAT_HOLE ?REW_HOLE Y ?G]
+        [macro ?PAT_HOLE [fork ?REW_HOLE [fork [?PAT_HOLE ?REW_HOLE Y ?G] ?G]]]]
+    ]
+  ]
+
+macro
+  [suc ?n]
+  [fork
+    ?n
+    [fork
+      [[suc ?n] ?n Y [macro [?PAT_HOLE ?REW_HOLE Y ?G] [macro ?PAT_HOLE [fork ?REW_HOLE [fork [[suc ?l] ?l Y ?G] ?G]]]]]
+      [macro [?PAT_HOLE ?REW_HOLE Y ?G]
+        [macro ?PAT_HOLE [fork ?REW_HOLE [fork [[suc ?m] ?m Y ?G] ?G]]]]
+    ]
+  ]
