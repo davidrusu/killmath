@@ -29,6 +29,8 @@ fn main() {
         .add_system(ars_ui.system())
         // .add_system(ars.system())
         .add_system(persistence.system())
+        // .add_system(ars_layout.system())
+        // .add_system(update_positions.system())
         .run();
 }
 
@@ -50,30 +52,117 @@ fn spawn_rewrite(commands: &mut Commands, materials: &Res<Materials>, rewrite: R
     commands.spawn((ARS, rewrite));
 }
 
-fn spawn_pattern(commands: &mut Commands, materials: &Res<Materials>, pattern: Pattern) {
+fn spawn_pattern(
+    commands: &mut Commands,
+    materials: &Res<Materials>,
+    font: &Res<ARSFont>,
+    pattern: Pattern,
+) {
     commands.spawn((ARS, pattern));
+    //     commands
+    //         .spawn(ButtonBundle {
+    //             style: Style {
+    //                 position_type: PositionType::Absolute,
+    //                 // size: Size::new(Val::Px(150.0), Val::Px(65.0)),
+    //                 // center button
+    //                 margin: Rect::all(Val::Auto),
+    //                 // horizontally center child text
+    //                 justify_content: JustifyContent::Center,
+    //                 // vertically center child text
+    //                 align_items: AlignItems::Center,
+    //                 ..Default::default()
+    //             },
+    //             material: materials.pattern_color.clone(),
+    //             ..Default::default()
+    //         })
+    //         .with_children(|parent| {
+    //             parent.spawn(TextBundle {
+    //                 text: Text {
+    //                     value: format!("{}", pattern),
+    //                     font: font.0.clone(),
+    //                     style: TextStyle {
+    //                         font_size: 12.0,
+    //                         color: Color::WHITE,
+    //                         ..Default::default()
+    //                     },
+    //                 },
+    //                 ..Default::default()
+    //             });
+    //         })
+    //         .with(ARS)
+    //         .with(pattern);
 }
 
-fn setup(commands: &mut Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
-    commands.spawn(Camera2dBundle::default());
-    commands.insert_resource(Materials {
-        pattern_color: materials.add(Color::rgb(0.1, 0.1, 0.1).into()),
-        rewrite_color: materials.add(Color::rgb(0.2, 0.15, 0.1).into()),
-        font_color: materials.add(Color::rgb(0.9, 0.9, 0.9).into()),
-    });
+struct ARSFont(Handle<Font>);
+fn setup(
+    commands: &mut Commands,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    commands
+        .spawn(CameraUiBundle::default())
+        .insert_resource(Materials {
+            pattern_color: materials.add(Color::rgb(0.1, 0.1, 0.1).into()),
+            rewrite_color: materials.add(Color::rgb(0.2, 0.15, 0.1).into()),
+            font_color: materials.add(Color::rgb(0.9, 0.9, 0.9).into()),
+        })
+        .insert_resource(ARSFont(asset_server.load("fonts/iosevka-medium.ttf")));
 }
 
-fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>) {
+fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font: Res<ARSFont>) {
     spawn_rewrite(commands, &materials, macro_rewrite());
     spawn_rewrite(commands, &materials, fork_rewrite());
 
     if let Ok(reader) = File::open("listings.nimic").map(BufReader::new) {
         for line in reader.lines() {
             if let Ok(pat) = line {
-                spawn_pattern(commands, &materials, Pattern::parse(&pat));
+                spawn_pattern(commands, &materials, &font, Pattern::parse(&pat));
             }
         }
     }
+}
+
+fn ars_layout(
+    time: Res<Time>,
+    mut timer: ResMut<PersistenceTimer>,
+    mut transforms: Query<&mut Transform, With<ARS>>,
+) {
+    let other_positions: Vec<Vec2> = transforms
+        .iter_mut()
+        .map(|t| t.translation.truncate())
+        .collect();
+
+    use rand::Rng;
+    let mut thread_rng = rand::thread_rng();
+    for mut transform in transforms.iter_mut() {
+        for p_other in other_positions.iter() {
+            let mut diff = transform.translation.truncate() - *p_other;
+            let d = diff.length();
+            if d > 0.0 {
+                diff += Vec2::new(
+                    thread_rng.gen_range(-1.0..1.0),
+                    thread_rng.gen_range(-1.0..1.0),
+                ) * 0.0001;
+                let push = (diff.normalize()).extend(0.0) * 0.001;
+                println!("Pushing {:?}", push);
+                // transform.translation += push;
+            }
+        }
+        println!("Transform: {:?}", transform.translation);
+        transform.translation.y += 1.0;
+    }
+}
+
+fn update_positions(mut styles: Query<(&Transform, &mut Style), With<ARS>>) {
+    //println!("Updating positions");
+    //for (transform, mut style) in styles.iter_mut() {
+    //    println!(
+    //        "Updating: {:?} -> {}",
+    //        style.position, transform.translation
+    //    );
+    //    //style.position.top = Val::Px(transform.translation.y);
+    //    //style.position.left = Val::Px(transform.translation.x);
+    //}
 }
 
 fn persistence(
@@ -124,14 +213,19 @@ struct Materials {
     font_color: Handle<ColorMaterial>,
 }
 
+struct Kinematics {
+    pos: Vec2,
+    vel: Vec2,
+}
+
 #[derive(Clone, PartialEq, Eq)]
 struct Rewrite(Pattern, Pattern);
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 enum Pattern {
-    Sym(String),
-    Hole(String),
-    Seq(Vec<Pattern>),
+    Sym(String),       // ==> concrete value
+    Hole(String),      // ==> ?var
+    Seq(Vec<Pattern>), // ==> [ x y ?v ]
 }
 
 impl Default for Pattern {
@@ -156,6 +250,48 @@ impl std::fmt::Display for Pattern {
     }
 }
 
+#[derive(PartialEq, Eq, Clone, Debug)]
+enum Tok {
+    StartSeq,     // => [
+    EndSeq,       // => ]
+    Sym(String),  // => word
+    Hole(String), // => ?var
+}
+
+impl Tok {
+    fn tokenize(raw: &str) -> VecDeque<Self> {
+        let mut tokens: Vec<Self> = Default::default();
+        let mut token_start = 0;
+        let mut tok_builder: fn(String) -> Self = Self::Sym;
+        for (i, c) in raw.chars().enumerate() {
+            let parsed_tok: Option<(_, fn(String) -> Self)> = match c {
+                '[' => Some((Some(Self::StartSeq), Self::Sym)),
+                ']' => Some((Some(Self::EndSeq), Self::Sym)),
+                '?' => Some((None, Self::Hole)),
+                c if c.is_whitespace() => Some((None, Self::Sym)),
+                _ => None,
+            };
+
+            if let Some((boundary_token, next_builder)) = parsed_tok {
+                tokens.push(tok_builder(raw[token_start..i].to_string()));
+                if let Some(tok) = boundary_token {
+                    tokens.push(tok);
+                }
+                tok_builder = next_builder;
+                token_start = i + 1;
+            }
+        }
+        tokens.push(tok_builder(raw[token_start..].to_string()));
+        tokens
+            .into_iter()
+            .filter(|t| match t {
+                Self::Sym(s) if s.chars().all(char::is_whitespace) => false,
+                _ => true,
+            })
+            .collect()
+    }
+}
+
 impl Pattern {
     fn parse_seq(tokens: &mut VecDeque<Tok>) -> Vec<Pattern> {
         let mut seq: Vec<Pattern> = Default::default();
@@ -166,16 +302,12 @@ impl Pattern {
     }
 
     fn parse_token(tokens: &mut VecDeque<Tok>) -> Option<Pattern> {
-        if let Some(tok) = tokens.pop_front() {
-            match tok {
-                Tok::StartSeq => Some(Self::Seq(Self::parse_seq(tokens))),
-                Tok::EndSeq => None,
-                Tok::Sym(sym) => Some(Self::Sym(sym)),
-                Tok::Hole(hole) => Some(Self::Hole(hole)),
-            }
-        } else {
-            None
-        }
+        tokens.pop_front().and_then(|tok| match tok {
+            Tok::StartSeq => Some(Self::Seq(Self::parse_seq(tokens))),
+            Tok::EndSeq => None,
+            Tok::Sym(sym) => Some(Self::Sym(sym)),
+            Tok::Hole(hole) => Some(Self::Hole(hole)),
+        })
     }
 
     fn parse(raw: &str) -> Pattern {
@@ -183,20 +315,18 @@ impl Pattern {
 
         let mut pattern = None;
         while !tokens.is_empty() {
-            let mut next_pats = Self::parse_seq(&mut tokens);
-            let next_pat = if next_pats.len() == 1 {
-                next_pats.pop().unwrap()
-            } else {
-                Pattern::Seq(next_pats)
-            };
+            let seq = Self::parse_seq(&mut tokens);
             if let Some(pat) = pattern {
-                pattern = Some(Pattern::Seq(vec![pat, next_pat]));
+                pattern = Some(Pattern::Seq(std::iter::once(pat).chain(seq).collect()));
             } else {
-                pattern = Some(next_pat);
+                pattern = Some(Pattern::Seq(seq));
             }
         }
 
-        pattern.unwrap_or_default()
+        match pattern.unwrap_or_default() {
+            Pattern::Seq(mut s) if s.len() == 1 => s.pop().unwrap(),
+            p => p,
+        }
     }
 
     fn bind(&self, other: &Self) -> Result<Vec<(String, Pattern)>, ()> {
@@ -259,56 +389,11 @@ impl Pattern {
         }
     }
 }
-#[derive(PartialEq, Eq, Clone, Debug)]
-enum Tok {
-    // TAI: what if we simply have seperators like `|`? then we don't need to track start and end
-    StartSeq,
-    EndSeq,
-    Sym(String),
-    Hole(String),
-}
-
-impl Tok {
-    fn tokenize(raw: &str) -> VecDeque<Self> {
-        let mut tokens: Vec<Self> = Default::default();
-        let mut token_start = 0;
-        let mut tok: fn(String) -> Self = Self::Sym;
-        for (i, c) in raw.chars().enumerate() {
-            if c == '[' {
-                tokens.push(tok(raw[token_start..i].to_string()));
-                tokens.push(Self::StartSeq);
-                tok = Self::Sym;
-                token_start = i + 1;
-            } else if c == ']' {
-                tokens.push(tok(raw[token_start..i].to_string()));
-                tokens.push(Self::EndSeq);
-                tok = Self::Sym;
-                token_start = i + 1;
-            } else if c == '?' {
-                tokens.push(tok(raw[token_start..i].to_string()));
-                tok = Self::Hole;
-                token_start = i + 1;
-            } else if c.is_whitespace() {
-                tokens.push(tok(raw[token_start..i].to_string()));
-                tok = Self::Sym;
-                token_start = i + 1;
-            }
-        }
-        tokens.push(tok(raw[token_start..].to_string()));
-
-        tokens
-            .into_iter()
-            .filter(|t| match t {
-                Self::Sym(s) if s.chars().all(char::is_whitespace) => false,
-                _ => true,
-            })
-            .collect()
-    }
-}
 
 fn listener_prompt(
     commands: &mut Commands,
     materials: Res<Materials>,
+    font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
     mut listener_state: ResMut<ListenerState>,
@@ -323,6 +408,7 @@ fn listener_prompt(
             spawn_pattern(
                 commands,
                 &materials,
+                &font,
                 Pattern::parse(&listener_state.command),
             );
             listener_state.command = Default::default();
@@ -339,7 +425,7 @@ fn listener_prompt(
             }
         }
         if ui.button("step").clicked {
-            step_ars(commands, materials, rewrites, free_patterns);
+            step_ars(commands, materials, font, rewrites, free_patterns);
         }
     });
 }
@@ -347,6 +433,7 @@ fn listener_prompt(
 fn step_ars(
     commands: &mut Commands,
     materials: Res<Materials>,
+    font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
 ) {
@@ -405,13 +492,13 @@ fn step_ars(
                         bindings_map.get("left").cloned(),
                         bindings_map.get("right").cloned(),
                     ) {
-                        spawn_pattern(commands, &materials, left);
-                        spawn_pattern(commands, &materials, right);
+                        spawn_pattern(commands, &materials, &font, left);
+                        spawn_pattern(commands, &materials, &font, right);
                     }
                 } else {
                     let rewritten_pattern = rewrite.1.apply(bindings);
                     commands.despawn(rewrite_entity);
-                    spawn_pattern(commands, &materials, rewritten_pattern);
+                    spawn_pattern(commands, &materials, &font, rewritten_pattern);
                 }
             }
         }
@@ -423,6 +510,7 @@ fn ars(
     mut timer: ResMut<ARSTimer>,
     commands: &mut Commands,
     materials: Res<Materials>,
+    font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
 ) {
@@ -430,7 +518,7 @@ fn ars(
         return;
     }
 
-    step_ars(commands, materials, rewrites, free_patterns);
+    step_ars(commands, materials, font, rewrites, free_patterns);
 }
 
 fn ars_ui(
@@ -460,216 +548,3 @@ fn ars_ui(
             });
     }
 }
-
-// use bevy::{
-//     diagnostic::{Diagnostics, FrameTimeDiagnosticsPlugin},
-//     prelude::*,
-// };
-
-// /// This example is for debugging text layout
-// fn main() {
-//     App::build()
-//         .add_resource(WindowDescriptor {
-//             vsync: false,
-//             ..Default::default()
-//         })
-//         .add_plugins(DefaultPlugins)
-//         .add_plugin(FrameTimeDiagnosticsPlugin)
-//         .add_startup_system(infotext_system.system())
-//         .add_system(change_text_system.system())
-//         .run();
-// }
-
-// struct TextChanges;
-
-// fn infotext_system(commands: &mut Commands, asset_server: Res<AssetServer>) {
-//     let font = asset_server.load("fonts/iosevka-regular.ttf");
-//     commands.spawn(CameraUiBundle::default());
-//     commands.spawn(TextBundle {
-//         style: Style {
-//             align_self: AlignSelf::FlexEnd,
-//             position_type: PositionType::Absolute,
-//             position: Rect {
-//                 top: Val::Px(5.0),
-//                 left: Val::Px(15.0),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         },
-//         text: Text {
-//             value: "This is\ntext with\nline breaks\nin the top left".to_string(),
-//             font: font.clone(),
-//             style: TextStyle {
-//                 font_size: 50.0,
-//                 color: Color::WHITE,
-//                 alignment: TextAlignment::default(),
-//             },
-//         },
-//         ..Default::default()
-//     });
-//     commands.spawn(TextBundle {
-//         style: Style {
-//             align_self: AlignSelf::FlexEnd,
-//             position_type: PositionType::Absolute,
-//             position: Rect {
-//                 top: Val::Px(5.0),
-//                 right: Val::Px(15.0),
-//                 ..Default::default()
-//             },
-//             max_size: Size {
-//                 width: Val::Px(400.),
-//                 height: Val::Undefined,
-//             },
-//             ..Default::default()
-//         },
-//         text: Text {
-//             value: "This is very long text with limited width in the top right and is also pink"
-//                 .to_string(),
-//             font: font.clone(),
-//             style: TextStyle {
-//                 font_size: 50.0,
-//                 color: Color::rgb(0.8, 0.2, 0.7),
-//                 alignment: TextAlignment {
-//                     horizontal: HorizontalAlign::Center,
-//                     vertical: VerticalAlign::Center,
-//                 },
-//             },
-//         },
-//         ..Default::default()
-//     });
-//     commands
-//         .spawn(TextBundle {
-//             style: Style {
-//                 align_self: AlignSelf::FlexEnd,
-//                 position_type: PositionType::Absolute,
-//                 position: Rect {
-//                     bottom: Val::Px(5.0),
-//                     right: Val::Px(15.0),
-//                     ..Default::default()
-//                 },
-//                 ..Default::default()
-//             },
-//             text: Text {
-//                 value: "This text changes in the bottom right".to_string(),
-//                 font: font.clone(),
-//                 style: TextStyle {
-//                     font_size: 30.0,
-//                     color: Color::WHITE,
-//                     alignment: TextAlignment::default(),
-//                 },
-//             },
-//             ..Default::default()
-//         })
-//         .with(TextChanges);
-//     commands.spawn(TextBundle {
-//         style: Style {
-//             align_self: AlignSelf::FlexEnd,
-//             position_type: PositionType::Absolute,
-//             position: Rect {
-//                 bottom: Val::Px(5.0),
-//                 left: Val::Px(15.0),
-//                 ..Default::default()
-//             },
-//             size: Size {
-//                 width: Val::Px(200.0),
-//                 ..Default::default()
-//             },
-//             ..Default::default()
-//         },
-//         text: Text {
-//             value: "This\ntext has\nline breaks and also a set width in the bottom left"
-//                 .to_string(),
-//             font,
-//             style: TextStyle {
-//                 font_size: 50.0,
-//                 color: Color::WHITE,
-//                 alignment: TextAlignment::default(),
-//             },
-//         },
-//         ..Default::default()
-//     });
-// }
-
-// fn change_text_system(
-//     time: Res<Time>,
-//     diagnostics: Res<Diagnostics>,
-//     mut query: Query<&mut Text, With<TextChanges>>,
-// ) {
-//     for mut text in query.iter_mut() {
-//         let mut fps = 0.0;
-//         if let Some(fps_diagnostic) = diagnostics.get(FrameTimeDiagnosticsPlugin::FPS) {
-//             if let Some(fps_avg) = fps_diagnostic.average() {
-//                 fps = fps_avg;
-//             }
-//         }
-
-//         let mut frame_time = time.delta_seconds_f64();
-//         if let Some(frame_time_diagnostic) = diagnostics.get(FrameTimeDiagnosticsPlugin::FRAME_TIME)
-//         {
-//             if let Some(frame_time_avg) = frame_time_diagnostic.average() {
-//                 frame_time = frame_time_avg;
-//             }
-//         }
-
-//         text.value = format!(
-//             "This text changes in the bottom right - {:.1} fps, {:.3} ms/frame",
-//             fps,
-//             frame_time * 1000.0,
-//         );
-//     }
-// }
-
-// // use bevy::prelude::*;
-
-// // struct Person;
-
-// // struct Name(String);
-
-// // pub struct HelloPlugin;
-
-// // impl Plugin for HelloPlugin {
-// //     fn build(&self, app: &mut AppBuilder) {
-// //         app.add_resource(GreetTimer(Timer::from_seconds(2.0, true)))
-// //             .add_startup_system(setup.system())
-// //             .add_system(greet_people.system());
-// //     }
-// // }
-
-// // fn setup(commands: &mut Commands, asset_server: Res<AssetServer>) {
-// //     commands
-// //         .spawn(Camera2dBundle::default())
-// //         .spawn(Text2dBundle {
-// //             text: Text {
-// //                 value: "This is text in the 2D scene".to_string(),
-// //                 font: asset_server.load("fonts/iosevka-regular.ttf"),
-// //                 style: TextStyle {
-// //                     font_size: 60.0,
-// //                     color: Color::WHITE,
-// //                     alignment: TextAlignment {
-// //                         vertical: VerticalAlign::Center,
-// //                         horizontal: HorizontalAlign::Center,
-// //                     },
-// //                 },
-// //             },
-// //             ..Default::default()
-// //         });
-// // }
-
-// // struct GreetTimer(Timer);
-
-// // fn greet_people(time: Res<Time>, mut timer: ResMut<GreetTimer>, query: Query<&Name, With<Person>>) {
-// //     if !timer.0.tick(time.delta_seconds()).just_finished() {
-// //         return;
-// //     }
-
-// //     for name in query.iter() {
-// //         println!("Hey {}!", name.0)
-// //     }
-// // }
-
-// // fn main() {
-// //     App::build()
-// //         .add_plugins(DefaultPlugins)
-// //         .add_plugin(HelloPlugin)
-// //         .run();
-// // }
