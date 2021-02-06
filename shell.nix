@@ -3,7 +3,7 @@ let
 in
   pkgs.mkShell {
     buildInputs = [
-      (pkgs.rustChannelOf { channel = "nightly"; }).rust
+      (pkgs.rustChannelOf { channel = "nightly"; date = "2021-02-04"; }).rust
       pkgs.lld_11
       pkgs.clang_11
       pkgs.alsaLib
