@@ -21,6 +21,10 @@ fn main() {
         .add_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
         .add_resource(ListenerState::default())
         .add_startup_system(setup.system())
+        .add_startup_stage(
+            "ars_setup",
+            SystemStage::single(spawn_initial_state.system()),
+        )
         .add_system(listener_prompt.system())
         .add_system(ars_ui.system())
         // .add_system(ars.system())
@@ -28,23 +32,36 @@ fn main() {
         .run();
 }
 
-fn macro_reduction() -> Reduction {
-    Reduction(
+fn macro_rewrite() -> Rewrite {
+    Rewrite(
         Pattern::parse("macro ?pattern ?rewrite".into()),
         Pattern::parse("<defined>"),
     )
 }
 
-fn fork_reduction() -> Reduction {
-    Reduction(
+fn fork_rewrite() -> Rewrite {
+    Rewrite(
         Pattern::parse("fork ?left ?right".into()),
         Pattern::parse("<left and right as individual entities>"),
     )
 }
 
-fn setup(commands: &mut Commands) {
-    commands.spawn((ARS, macro_reduction()));
-    commands.spawn((ARS, fork_reduction()));
+fn spawn_rewrite(commands: &mut Commands, materials: Res<Materials>, rewrite: Rewrite) {
+    commands.spawn((ARS, rewrite));
+}
+
+fn setup(commands: &mut Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
+    commands.spawn(Camera2dBundle::default());
+    commands.insert_resource(Materials {
+        pattern_color: materials.add(Color::rgb(0.1, 0.1, 0.1).into()),
+        rewrite_color: materials.add(Color::rgb(0.2, 0.15, 0.1).into()),
+        font_color: materials.add(Color::rgb(0.9, 0.9, 0.9).into()),
+    });
+}
+
+fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>) {
+    commands.spawn((ARS, macro_rewrite()));
+    commands.spawn((ARS, fork_rewrite()));
 
     if let Ok(reader) = File::open("listings.nimic").map(BufReader::new) {
         for line in reader.lines() {
@@ -58,7 +75,7 @@ fn setup(commands: &mut Commands) {
 fn persistence(
     time: Res<Time>,
     mut timer: ResMut<PersistenceTimer>,
-    reductions: Query<&Reduction, With<ARS>>,
+    rewrites: Query<&Rewrite, With<ARS>>,
     free_patterns: Query<&Pattern, With<ARS>>,
 ) {
     if !timer.0.tick(time.delta_seconds()).just_finished() {
@@ -74,12 +91,12 @@ fn persistence(
             tmp.write_all(format!("{}\n", pattern).as_bytes()).unwrap();
         }
 
-        for reduction in reductions.iter() {
-            if reduction == &macro_reduction() || reduction == &fork_reduction() {
+        for rewrite in rewrites.iter() {
+            if rewrite == &macro_rewrite() || rewrite == &fork_rewrite() {
                 continue;
             }
 
-            tmp.write_all(format!("macro {} {}\n", reduction.0, reduction.1).as_bytes())
+            tmp.write_all(format!("macro {} {}\n", rewrite.0, rewrite.1).as_bytes())
                 .unwrap();
         }
     }
@@ -97,8 +114,14 @@ struct ARSTimer(Timer);
 struct PersistenceTimer(Timer);
 struct ARS;
 
+struct Materials {
+    pattern_color: Handle<ColorMaterial>,
+    rewrite_color: Handle<ColorMaterial>,
+    font_color: Handle<ColorMaterial>,
+}
+
 #[derive(Clone, PartialEq, Eq)]
-struct Reduction(Pattern, Pattern);
+struct Rewrite(Pattern, Pattern);
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 enum Pattern {
@@ -281,7 +304,7 @@ impl Tok {
 
 fn listener_prompt(
     commands: &mut Commands,
-    reductions: Query<(Entity, &Reduction), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
     mut listener_state: ResMut<ListenerState>,
     mut egui_context: ResMut<EguiContext>,
@@ -296,8 +319,8 @@ fn listener_prompt(
             listener_state.command = Default::default();
         }
         if ui.button("clear").clicked {
-            for (e, r) in reductions.iter() {
-                if r != &macro_reduction() && r != &fork_reduction() {
+            for (e, r) in rewrites.iter() {
+                if r != &macro_rewrite() && r != &fork_rewrite() {
                     commands.despawn(e);
                 }
             }
@@ -307,20 +330,20 @@ fn listener_prompt(
             }
         }
         if ui.button("step").clicked {
-            step_ars(commands, reductions, free_patterns);
+            step_ars(commands, rewrites, free_patterns);
         }
     });
 }
 
 fn step_ars(
     commands: &mut Commands,
-    reductions: Query<(Entity, &Reduction), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
 ) {
-    let mut spent_reductions: BTreeSet<Entity> = Default::default();
+    let mut spent_rewrites: BTreeSet<Entity> = Default::default();
 
     for (pattern_entity, pattern) in free_patterns.iter() {
-        let mut candidate_reductions: Vec<(Reduction, Entity)> = Default::default();
+        let mut candidate_rewrites: Vec<(Rewrite, Entity)> = Default::default();
 
         let pattern_holes: BTreeMap<_, _> = pattern
             .holes()
@@ -330,23 +353,23 @@ fn step_ars(
 
         let pattern = pattern.clone().rename_holes(pattern_holes);
 
-        for (reduction_entity, reduction) in reductions.iter() {
-            if spent_reductions.contains(&reduction_entity) {
+        for (rewrite_entity, rewrite) in rewrites.iter() {
+            if spent_rewrites.contains(&rewrite_entity) {
                 continue;
             }
-            if let Ok(bindings) = reduction.0.bind(&pattern) {
-                candidate_reductions.push((reduction.clone(), reduction_entity));
+            if let Ok(bindings) = rewrite.0.bind(&pattern) {
+                candidate_rewrites.push((rewrite.clone(), rewrite_entity));
             }
         }
-        candidate_reductions
+        candidate_rewrites
             .sort_by(|(r_a, _), (r_b, _)| r_a.0.complexity().cmp(&r_b.0.complexity()));
-        if let Some((reduction, reduction_entity)) = candidate_reductions.pop() {
-            if let Ok(bindings) = reduction.0.bind(&pattern) {
+        if let Some((rewrite, rewrite_entity)) = candidate_rewrites.pop() {
+            if let Ok(bindings) = rewrite.0.bind(&pattern) {
                 println!("Bindings {:?}", bindings);
                 commands.despawn(pattern_entity);
-                spent_reductions.insert(reduction_entity);
+                spent_rewrites.insert(rewrite_entity);
 
-                if reduction == macro_reduction() {
+                if rewrite == macro_rewrite() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
                     if bindings_map.len() != bindings.len() {
                         panic!("Unification is not supported yet");
@@ -357,12 +380,12 @@ fn step_ars(
                         bindings_map.get("rewrite").cloned(),
                     ) {
                         if pattern == rewrite {
-                            println!("Dropping identity reduction");
+                            println!("Dropping identity rewrite");
                             continue;
                         }
-                        commands.spawn((ARS, Reduction(pattern, rewrite)));
+                        commands.spawn((ARS, Rewrite(pattern, rewrite)));
                     }
-                } else if reduction == fork_reduction() {
+                } else if rewrite == fork_rewrite() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
                     if bindings_map.len() != bindings.len() {
                         panic!("Unification is not supported yet");
@@ -390,14 +413,14 @@ fn step_ars(
                         commands.spawn((ARS, right));
                     }
                 } else {
-                    let rewritten_pattern = reduction.1.apply(bindings);
+                    let rewritten_pattern = rewrite.1.apply(bindings);
                     // let anon_holes: BTreeMap<_, _> = rewritten_pattern
                     //     .holes()
                     //     .into_iter()
                     //     .map(|h| (h, unique_hole()))
                     //     .collect();
 
-                    commands.despawn(reduction_entity);
+                    commands.despawn(rewrite_entity);
                     // commands.spawn((ARS, rewritten_pattern.rename_holes(anon_holes)));
                     commands.spawn((ARS, rewritten_pattern));
                 }
@@ -410,20 +433,20 @@ fn ars(
     time: Res<Time>,
     mut timer: ResMut<ARSTimer>,
     commands: &mut Commands,
-    reductions: Query<(Entity, &Reduction), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
 ) {
     if !timer.0.tick(time.delta_seconds()).just_finished() {
         return;
     }
 
-    step_ars(commands, reductions, free_patterns);
+    step_ars(commands, rewrites, free_patterns);
 }
 
 fn ars_ui(
     mut egui_context: ResMut<EguiContext>,
     patterns: Query<&Pattern, With<ARS>>,
-    reductions: Query<&Reduction, With<ARS>>,
+    rewrites: Query<&Rewrite, With<ARS>>,
 ) {
     let ctx = &mut egui_context.ctx;
     for (i, pattern) in patterns.iter().enumerate() {
@@ -434,15 +457,15 @@ fn ars_ui(
             });
     }
 
-    for (i, reduction) in reductions.iter().enumerate() {
-        egui::Window::new(format!("{}. {} => {}", i, reduction.0, reduction.1))
+    for (i, rewrite) in rewrites.iter().enumerate() {
+        egui::Window::new(format!("{}. {} => {}", i, rewrite.0, rewrite.1))
             .title_bar(false)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    ui.monospace(format!("{}", reduction.0));
+                    ui.monospace(format!("{}", rewrite.0));
                     ui.separator();
-                    ui.monospace(format!("{}", reduction.1));
+                    ui.monospace(format!("{}", rewrite.1));
                 });
             });
     }
