@@ -42,12 +42,16 @@ fn macro_rewrite() -> Rewrite {
 fn fork_rewrite() -> Rewrite {
     Rewrite(
         Pattern::parse("fork ?left ?right".into()),
-        Pattern::parse("<left and right as individual entities>"),
+        Pattern::parse("<?left and ?right as individual entities>"),
     )
 }
 
-fn spawn_rewrite(commands: &mut Commands, materials: Res<Materials>, rewrite: Rewrite) {
+fn spawn_rewrite(commands: &mut Commands, materials: &Res<Materials>, rewrite: Rewrite) {
     commands.spawn((ARS, rewrite));
+}
+
+fn spawn_pattern(commands: &mut Commands, materials: &Res<Materials>, pattern: Pattern) {
+    commands.spawn((ARS, pattern));
 }
 
 fn setup(commands: &mut Commands, mut materials: ResMut<Assets<ColorMaterial>>) {
@@ -60,13 +64,13 @@ fn setup(commands: &mut Commands, mut materials: ResMut<Assets<ColorMaterial>>) 
 }
 
 fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>) {
-    commands.spawn((ARS, macro_rewrite()));
-    commands.spawn((ARS, fork_rewrite()));
+    spawn_rewrite(commands, &materials, macro_rewrite());
+    spawn_rewrite(commands, &materials, fork_rewrite());
 
     if let Ok(reader) = File::open("listings.nimic").map(BufReader::new) {
         for line in reader.lines() {
             if let Ok(pat) = line {
-                commands.spawn((ARS, Pattern::parse(&pat)));
+                spawn_pattern(commands, &materials, Pattern::parse(&pat));
             }
         }
     }
@@ -304,6 +308,7 @@ impl Tok {
 
 fn listener_prompt(
     commands: &mut Commands,
+    materials: Res<Materials>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
     mut listener_state: ResMut<ListenerState>,
@@ -315,7 +320,11 @@ fn listener_prompt(
         if (ui.button("parse").clicked || listener_resp.lost_kb_focus)
             && !listener_state.command.is_empty()
         {
-            commands.spawn((ARS, Pattern::parse(&listener_state.command)));
+            spawn_pattern(
+                commands,
+                &materials,
+                Pattern::parse(&listener_state.command),
+            );
             listener_state.command = Default::default();
         }
         if ui.button("clear").clicked {
@@ -330,13 +339,14 @@ fn listener_prompt(
             }
         }
         if ui.button("step").clicked {
-            step_ars(commands, rewrites, free_patterns);
+            step_ars(commands, materials, rewrites, free_patterns);
         }
     });
 }
 
 fn step_ars(
     commands: &mut Commands,
+    materials: Res<Materials>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
 ) {
@@ -383,7 +393,7 @@ fn step_ars(
                             println!("Dropping identity rewrite");
                             continue;
                         }
-                        commands.spawn((ARS, Rewrite(pattern, rewrite)));
+                        spawn_rewrite(commands, &materials, Rewrite(pattern, rewrite));
                     }
                 } else if rewrite == fork_rewrite() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
@@ -395,34 +405,13 @@ fn step_ars(
                         bindings_map.get("left").cloned(),
                         bindings_map.get("right").cloned(),
                     ) {
-                        // let anon_holes_left: BTreeMap<_, _> = left
-                        //     .holes()
-                        //     .into_iter()
-                        //     .map(|h| (h, unique_hole()))
-                        //     .collect();
-
-                        // let anon_holes_right: BTreeMap<_, _> = right
-                        //     .holes()
-                        //     .into_iter()
-                        //     .map(|h| (h, unique_hole()))
-                        //     .collect();
-
-                        // commands.spawn((ARS, left.rename_holes(anon_holes_left)));
-                        // commands.spawn((ARS, right.rename_holes(anon_holes_right)));
-                        commands.spawn((ARS, left));
-                        commands.spawn((ARS, right));
+                        spawn_pattern(commands, &materials, left);
+                        spawn_pattern(commands, &materials, right);
                     }
                 } else {
                     let rewritten_pattern = rewrite.1.apply(bindings);
-                    // let anon_holes: BTreeMap<_, _> = rewritten_pattern
-                    //     .holes()
-                    //     .into_iter()
-                    //     .map(|h| (h, unique_hole()))
-                    //     .collect();
-
                     commands.despawn(rewrite_entity);
-                    // commands.spawn((ARS, rewritten_pattern.rename_holes(anon_holes)));
-                    commands.spawn((ARS, rewritten_pattern));
+                    spawn_pattern(commands, &materials, rewritten_pattern);
                 }
             }
         }
@@ -433,6 +422,7 @@ fn ars(
     time: Res<Time>,
     mut timer: ResMut<ARSTimer>,
     commands: &mut Commands,
+    materials: Res<Materials>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern), With<ARS>>,
 ) {
@@ -440,7 +430,7 @@ fn ars(
         return;
     }
 
-    step_ars(commands, rewrites, free_patterns);
+    step_ars(commands, materials, rewrites, free_patterns);
 }
 
 fn ars_ui(
