@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 
 use bevy::prelude::*;
+use bevy::text::CalculatedSize;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
 
 fn unique_hole() -> String {
@@ -17,20 +18,21 @@ fn main() {
     App::build()
         .add_plugins(DefaultPlugins)
         .add_plugin(EguiPlugin)
-        .add_resource(ARSTimer(Timer::from_seconds(1.0, true)))
-        .add_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
-        .add_resource(ListenerState::default())
         .add_startup_system(setup.system())
         .add_startup_stage(
             "ars_setup",
             SystemStage::single(spawn_initial_state.system()),
         )
         .add_system(listener_prompt.system())
-        .add_system(ars_ui.system())
+        // .add_system(ars_ui.system())
         // .add_system(ars.system())
         .add_system(persistence.system())
-        // .add_system(ars_layout.system())
-        // .add_system(update_positions.system())
+        .add_system(ars_layout.system())
+        .add_system(update_positions.system())
+        .add_system(ars_kinematics.system())
+        .add_system(ars_term_bg.system())
+        .add_system(rewrite_layout.system())
+        .add_system(propagate_bboxes.system())
         .run();
 }
 
@@ -48,8 +50,95 @@ fn fork_rewrite() -> Rewrite {
     )
 }
 
-fn spawn_rewrite(commands: &mut Commands, materials: &Res<Materials>, rewrite: Rewrite) {
-    commands.spawn((ARS, rewrite));
+fn spawn_rewrite(
+    commands: &mut Commands,
+    materials: &Res<Materials>,
+    font: &Res<ARSFont>,
+    rewrite: Rewrite,
+) {
+    // commands.spawn((ARS, rewrite));
+    commands
+        .spawn((
+            ARS,
+            rewrite.clone(),
+            Kinematics::random(),
+            GlobalTransform::default(),
+            Transform::default(),
+            BBox::default(),
+        ))
+        .with_children(|parent| {
+            parent
+                .spawn(Text2dBundle {
+                    text: Text::with_section(
+                        rewrite.0.pprint(),
+                        TextStyle {
+                            font: font.0.clone(),
+                            font_size: 12.0,
+                            color: Color::WHITE,
+                        },
+                        TextAlignment {
+                            vertical: VerticalAlign::Center,
+                            horizontal: HorizontalAlign::Left,
+                        },
+                    ),
+                    ..Default::default()
+                })
+                .with_children(|parent| {
+                    parent
+                        .spawn(SpriteBundle {
+                            material: materials.rewrite_color.clone(),
+                            sprite: Sprite::new(Vec2::new(100.0, 100.0)),
+                            ..Default::default()
+                        })
+                        .with(PatternBG)
+                        .with(FollowParent)
+                        .with(BBox::default());
+                })
+                .with(TextWithBG)
+                .with(FollowParent)
+                .with(TopPattern)
+                .with(BBox::default());
+            parent
+                .spawn(SpriteBundle {
+                    material: materials.surfboard_line_color.clone(),
+                    sprite: Sprite::new(Vec2::new(500.0, 10.0)),
+                    ..Default::default()
+                })
+                .with(SurfboardLine)
+                .with(FollowParent)
+                .with(BBox::default());
+            parent
+                .spawn(Text2dBundle {
+                    text: Text::with_section(
+                        rewrite.1.pprint(),
+                        TextStyle {
+                            font: font.0.clone(),
+                            font_size: 12.0,
+                            color: Color::WHITE,
+                        },
+                        TextAlignment {
+                            vertical: VerticalAlign::Center,
+                            horizontal: HorizontalAlign::Left,
+                        },
+                    ),
+                    ..Default::default()
+                })
+                .with_children(|parent| {
+                    parent
+                        .spawn(SpriteBundle {
+                            material: materials.rewrite_color.clone(),
+                            sprite: Sprite::new(Vec2::new(100.0, 100.0)),
+                            ..Default::default()
+                        })
+                        .with(PatternBG)
+                        .with(FollowParent)
+                        .with(BBox::default());
+                })
+                .with(TextWithBG)
+                .with(FollowParent)
+                .with(BottomPattern)
+                .with(BBox::default());
+        });
 }
 
 fn spawn_pattern(
@@ -58,39 +147,38 @@ fn spawn_pattern(
     font: &Res<ARSFont>,
     pattern: Pattern,
 ) {
-    commands.spawn((ARS, pattern));
-    //     commands
-    //         .spawn(ButtonBundle {
-    //             style: Style {
-    //                 position_type: PositionType::Absolute,
-    //                 // size: Size::new(Val::Px(150.0), Val::Px(65.0)),
-    //                 // center button
-    //                 margin: Rect::all(Val::Auto),
-    //                 // horizontally center child text
-    //                 justify_content: JustifyContent::Center,
-    //                 // vertically center child text
-    //                 align_items: AlignItems::Center,
-    //                 ..Default::default()
-    //             },
-    //             material: materials.pattern_color.clone(),
-    //             ..Default::default()
-    //         })
-    //         .with_children(|parent| {
-    //             parent.spawn(TextBundle {
-    //                 text: Text {
-    //                     value: format!("{}", pattern),
-    //                     font: font.0.clone(),
-    //                     style: TextStyle {
-    //                         font_size: 12.0,
-    //                         color: Color::WHITE,
-    //                         ..Default::default()
-    //                     },
-    //                 },
-    //                 ..Default::default()
-    //             });
-    //         })
-    //         .with(ARS)
-    //         .with(pattern);
+    // commands.spawn((ARS, pattern));
+    commands
+        .spawn(Text2dBundle {
+            text: Text::with_section(
+                pattern.pprint(),
+                TextStyle {
+                    font: font.0.clone(),
+                    font_size: 12.0,
+                    color: Color::WHITE,
+                },
+                TextAlignment {
+                    vertical: VerticalAlign::Center,
+                    horizontal: HorizontalAlign::Left,
+                },
+            ),
+            ..Default::default()
+        })
+        .with_children(|parent| {
+            parent
+                .spawn(SpriteBundle {
+                    material: materials.pattern_color.clone(),
+                    sprite: Sprite::new(Vec2::new(100.0, 100.0)),
+                    ..Default::default()
+                })
+                .with(PatternBG)
+                .with(BBox::default());
+        })
+        .with(TextWithBG)
+        .with(ARS)
+        .with(pattern)
+        .with(Kinematics::random())
+        .with(BBox::default());
 }
 
 struct ARSFont(Handle<Font>);
@@ -100,18 +188,22 @@ fn setup(
     asset_server: Res<AssetServer>,
 ) {
     commands
-        .spawn(CameraUiBundle::default())
+        .spawn(OrthographicCameraBundle::new_2d())
+        .insert_resource(ARSTimer(Timer::from_seconds(0.01, true)))
+        .insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
+        .insert_resource(ListenerState::default())
         .insert_resource(Materials {
-            pattern_color: materials.add(Color::rgb(0.1, 0.1, 0.1).into()),
-            rewrite_color: materials.add(Color::rgb(0.2, 0.15, 0.1).into()),
+            pattern_color: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.3).into()),
+            rewrite_color: materials.add(Color::rgba(0.35, 0.4, 0.1, 0.5).into()),
             font_color: materials.add(Color::rgb(0.9, 0.9, 0.9).into()),
+            surfboard_line_color: materials.add(Color::rgb(0.0, 0.0, 0.0).into()),
         })
         .insert_resource(ARSFont(asset_server.load("fonts/iosevka-medium.ttf")));
 }
 
 fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font: Res<ARSFont>) {
-    spawn_rewrite(commands, &materials, macro_rewrite());
-    spawn_rewrite(commands, &materials, fork_rewrite());
+    spawn_rewrite(commands, &materials, &font, macro_rewrite());
+    spawn_rewrite(commands, &materials, &font, fork_rewrite());
 
     if let Ok(reader) = File::open("listings.nimic").map(BufReader::new) {
         for line in reader.lines() {
@@ -124,45 +216,230 @@ fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font:
 
 fn ars_layout(
     time: Res<Time>,
-    mut timer: ResMut<PersistenceTimer>,
-    mut transforms: Query<&mut Transform, With<ARS>>,
+    mut timer: ResMut<ARSTimer>,
+    bboxes: Query<(Entity, &BBox), With<ARS>>,
+    mut kinematics: Query<&mut Kinematics, With<ARS>>,
 ) {
-    let other_positions: Vec<Vec2> = transforms
-        .iter_mut()
-        .map(|t| t.translation.truncate())
-        .collect();
+    if !timer.0.tick(time.delta_seconds()).just_finished() {
+        return;
+    }
 
-    use rand::Rng;
-    let mut thread_rng = rand::thread_rng();
-    for mut transform in transforms.iter_mut() {
-        for p_other in other_positions.iter() {
-            let mut diff = transform.translation.truncate() - *p_other;
-            let d = diff.length();
-            if d > 0.0 {
-                diff += Vec2::new(
-                    thread_rng.gen_range(-1.0..1.0),
-                    thread_rng.gen_range(-1.0..1.0),
-                ) * 0.0001;
-                let push = (diff.normalize()).extend(0.0) * 0.001;
-                println!("Pushing {:?}", push);
-                // transform.translation += push;
+    for (e_1, bbox_1) in bboxes.iter() {
+        for (e_2, bbox_2) in bboxes.iter() {
+            if e_1 == e_2 {
+                continue;
+            }
+
+            let buffer = 10.0;
+            let height_1 = bbox_1.upper_right.y - bbox_1.lower_left.y + buffer;
+            let height_2 = bbox_2.upper_right.y - bbox_2.lower_left.y + buffer;
+            let width_1 = bbox_1.upper_right.x - bbox_1.lower_left.x + buffer;
+            let width_2 = bbox_2.upper_right.x - bbox_2.lower_left.x + buffer;
+            let combined_height = height_1 + height_2;
+            let combined_width = width_1 + width_2;
+            assert!(height_1 >= 0.0);
+            assert!(width_1 >= 0.0);
+            assert!(height_2 >= 0.0);
+            assert!(width_2 >= 0.0);
+
+            let delta = (bbox_2.upper_right - bbox_1.upper_right);
+
+            if delta.x > 0.0 && delta.x > width_2 {
+                continue;
+            }
+            if delta.x < 0.0 && delta.x < -width_1 {
+                continue;
+            }
+            if delta.y > 0.0 && delta.y > height_2 {
+                continue;
+            }
+            if delta.y < 0.0 && delta.y < -height_1 {
+                continue;
+            }
+
+            // let upper_gap = bbox_1.upper_right.y - bbox_2.lower_left.y;
+            // let left_gap = bbox_1.lower_left.x - bbox_2.upper_right.x;
+            // println!(
+            //     "upper_gap: {} < 0.0 || {} > {}",
+            //     upper_gap, upper_gap, combined_height
+            // );
+            // if upper_gap < 0.0 || upper_gap > combined_height {
+            //     continue;
+            // }
+            // println!(
+            //     "left_gap: {} < 0.0 || {} > {}",
+            //     left_gap, left_gap, combined_width
+            // );
+            // if left_gap < 0.0 || left_gap > combined_width {
+            //     continue;
+            // }
+
+            let mut push_vec = Vec2::default();
+
+            push_vec.x = if delta.x > 0.0 {
+                width_2 - delta.x
+            } else {
+                delta.x - width_1
+            };
+            push_vec.y = if delta.y > 0.0 {
+                height_2 - delta.y
+            } else {
+                delta.y - height_1
+            };
+
+            if push_vec.x.abs() > push_vec.y.abs() {
+                push_vec.x *= 0.2;
+            } else {
+                push_vec.y *= 0.2;
+            }
+
+            if push_vec.length() < 1. {
+                continue;
+            }
+            push_vec *= 0.01;
+            push_vec = push_vec.normalize() * push_vec.length().min(10.);
+            if let Ok(mut e_kin) = kinematics.get_mut(e_1) {
+                e_kin.vel -= push_vec;
+            }
+            if let Ok(mut e_kin) = kinematics.get_mut(e_2) {
+                e_kin.vel += push_vec;
             }
         }
-        println!("Transform: {:?}", transform.translation);
-        transform.translation.y += 1.0;
     }
 }
 
-fn update_positions(mut styles: Query<(&Transform, &mut Style), With<ARS>>) {
+fn ars_kinematics(
+    time: Res<Time>,
+    mut timer: ResMut<ARSTimer>,
+    mut kinematics: Query<&mut Kinematics>,
+) {
+    if !timer.0.just_finished() {
+        return;
+    }
+    for mut k in kinematics.iter_mut() {
+        k.vel = k.vel - k.pos.normalize() * 1.0;
+        k.pos = k.pos + k.vel * time.delta_seconds();
+        k.vel *= 0.8;
+    }
+}
+
+fn update_positions(mut kin_and_trans: Query<(&Kinematics, &mut Transform)>) {
     //println!("Updating positions");
-    //for (transform, mut style) in styles.iter_mut() {
-    //    println!(
-    //        "Updating: {:?} -> {}",
-    //        style.position, transform.translation
-    //    );
-    //    //style.position.top = Val::Px(transform.translation.y);
-    //    //style.position.left = Val::Px(transform.translation.x);
-    //}
+    for (kinematics, mut transform) in kin_and_trans.iter_mut() {
+        transform.translation.x = kinematics.pos.x;
+        transform.translation.y = kinematics.pos.y;
+    }
+}
+
+fn ars_term_bg(
+    calculated_size_q: Query<(Entity, &CalculatedSize, &Children), With<TextWithBG>>,
+    mut sprites: Query<(&mut Sprite, &mut Transform), With<PatternBG>>,
+) {
+    for (parent, calculated_size, children) in calculated_size_q.iter() {
+        for child in children.iter() {
+            if let Ok((mut s, mut trans)) = sprites.get_mut(*child) {
+                let margin = 10.0;
+                s.size = Vec2::new(
+                    calculated_size.size.width + margin,
+                    calculated_size.size.height,
+                );
+                trans.translation.x = -calculated_size.size.width * 0.5;
+            }
+        }
+    }
+}
+
+fn rewrite_layout(
+    rewrites: Query<(Entity, &Children, &Transform), With<ARS>>,
+    mut top_patterns: Query<(&mut Transform, &CalculatedSize), With<TopPattern>>,
+    mut surfboards: Query<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
+    mut bottom_patterns: Query<(&mut Transform, &CalculatedSize), With<BottomPattern>>,
+) {
+    for (parent, children, parent_trans) in rewrites.iter() {
+        let mut top_height = None;
+        let mut top_width = None;
+        let mut bottom_height = None;
+        let mut bottom_width = None;
+        for child in children.iter() {
+            if let Ok((trans, calc_size)) = top_patterns.get_mut(*child) {
+                top_height = Some(calc_size.size.height);
+                top_width = Some(calc_size.size.width);
+            }
+            if let Ok((trans, calc_size)) = bottom_patterns.get_mut(*child) {
+                bottom_height = Some(calc_size.size.height);
+                bottom_width = Some(calc_size.size.width);
+            }
+        }
+        if let (Some(top_h), Some(top_w), Some(bottom_h), Some(bottom_w)) =
+            (top_height, top_width, bottom_height, bottom_width)
+        {
+            let rewrite_w = top_w.max(bottom_w);
+            for child in children.iter() {
+                if let Ok((mut trans, mut sprite)) = surfboards.get_mut(*child) {
+                    let surfboard_w = rewrite_w + 20.0;
+                    sprite.size = Vec2::new(surfboard_w, 1.5);
+                    trans.translation.y = -top_h;
+                    trans.translation.x = -rewrite_w * 0.5;
+                    // trans.translation.x = -rewrite_w * 0.5;
+                }
+                if let Ok((mut trans, _)) = bottom_patterns.get_mut(*child) {
+                    trans.translation.y = -(top_h + bottom_h * 0.5 + 5.);
+                    trans.translation.x = -(rewrite_w - bottom_w) * 0.5;
+                }
+                if let Ok((mut trans, _)) = top_patterns.get_mut(*child) {
+                    // trans.translation.y = -(top_h + 10.0);
+                    trans.translation.x = -(rewrite_w - top_w) * 0.5;
+                }
+            }
+        }
+    }
+}
+
+fn propagate_bboxes(
+    mut bboxes: Query<&mut BBox>,
+    sprites: Query<(Entity, &Sprite), With<BBox>>,
+    transforms: Query<&Transform, With<BBox>>,
+    parents: Query<(Entity, &Children), With<BBox>>,
+    global_transforms: Query<&GlobalTransform, With<BBox>>,
+) {
+    for (e, sprite) in sprites.iter() {
+        let bbox = bboxes.get_mut(e);
+        let trans = transforms.get(e);
+        if let (Ok(mut bbox), Ok(trans)) = (bbox, trans) {
+            let pos = trans.translation;
+            bbox.upper_right = sprite.size * 0.5;
+            bbox.lower_left = -sprite.size * 0.5;
+        }
+    }
+
+    for (parent, children) in parents.iter() {
+        let mut parent_bbox = BBox::default();
+
+        for child in children.iter() {
+            let child_bbox = bboxes.get_mut(*child);
+            let trans = transforms.get(*child);
+            if let (Ok(child_bbox), Ok(trans)) = (child_bbox, trans) {
+                let pos = trans.translation.truncate();
+                let upper_right = pos + child_bbox.upper_right;
+                let lower_left = pos + child_bbox.lower_left;
+                parent_bbox.upper_right = upper_right.max(parent_bbox.upper_right);
+                parent_bbox.lower_left = lower_left.min(parent_bbox.lower_left);
+            }
+        }
+
+        let global_translation = global_transforms
+            .get(parent)
+            .ok()
+            .cloned()
+            .unwrap_or_default()
+            .translation
+            .truncate();
+
+        if let Ok(mut bbox) = bboxes.get_mut(parent) {
+            bbox.upper_right = parent_bbox.upper_right + global_translation;
+            bbox.lower_left = parent_bbox.lower_left + global_translation;
+        }
+    }
 }
 
 fn persistence(
@@ -206,19 +483,47 @@ struct ListenerState {
 struct ARSTimer(Timer);
 struct PersistenceTimer(Timer);
 struct ARS;
+struct PatternBG;
+struct SurfboardLine;
+struct TopPattern;
+struct BottomPattern;
+struct FollowParent;
+struct TextWithBG;
+#[derive(Default, Debug)]
+struct BBox {
+    upper_right: Vec2,
+    lower_left: Vec2,
+}
 
 struct Materials {
     pattern_color: Handle<ColorMaterial>,
     rewrite_color: Handle<ColorMaterial>,
+    surfboard_line_color: Handle<ColorMaterial>,
     font_color: Handle<ColorMaterial>,
 }
 
+#[derive(Debug, Default)]
 struct Kinematics {
     pos: Vec2,
     vel: Vec2,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+impl Kinematics {
+    fn random() -> Self {
+        use rand::Rng;
+        let mut thread_rng = rand::thread_rng();
+
+        Self {
+            pos: Vec2::new(
+                thread_rng.gen_range(-1.0..1.0),
+                thread_rng.gen_range(-1.0..1.0),
+            ) * 4.,
+            vel: Vec2::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Rewrite(Pattern, Pattern);
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -329,6 +634,40 @@ impl Pattern {
         }
     }
 
+    fn pprint(&self) -> String {
+        self.pprint_indented(0, false)
+    }
+
+    fn pprint_indented(&self, indent_level: usize, parent_wrapped: bool) -> String {
+        let indent: String = std::iter::repeat(" ".to_string())
+            .take(indent_level)
+            .collect();
+        match self {
+            Self::Sym(s) => format!("{}", s),
+            Self::Hole(h) => format!("?{}", h),
+            Self::Seq(seq) => {
+                let mut cumulative_complexity = 0;
+                let mut wrapped = false;
+                let mut pprint = format!("{}[", if parent_wrapped { &indent } else { "" });
+                for pat in seq.iter().intersperse(&Self::Sym(" ".into())) {
+                    cumulative_complexity += pat.complexity();
+                    if cumulative_complexity > 30 {
+                        cumulative_complexity = 0;
+                        wrapped = true;
+                        pprint = format!("{}\n{}", pprint, indent);
+                    }
+                    pprint = format!(
+                        "{}{}",
+                        pprint,
+                        pat.pprint_indented(indent_level + (if wrapped { 1 } else { 0 }), wrapped)
+                    );
+                }
+                pprint = format!("{}]", pprint);
+                pprint
+            }
+        }
+    }
+
     fn bind(&self, other: &Self) -> Result<Vec<(String, Pattern)>, ()> {
         match (self, other) {
             (Self::Sym(a), Self::Sym(b)) => {
@@ -402,7 +741,7 @@ fn listener_prompt(
     let ctx = &mut egui_context.ctx;
     egui::Window::new("Listener").show(ctx, |ui| {
         let listener_resp = ui.text_edit_multiline(&mut listener_state.command);
-        if (ui.button("parse").clicked || listener_resp.lost_kb_focus)
+        if (ui.button("parse").clicked() || listener_resp.lost_kb_focus())
             && !listener_state.command.is_empty()
         {
             spawn_pattern(
@@ -413,18 +752,18 @@ fn listener_prompt(
             );
             listener_state.command = Default::default();
         }
-        if ui.button("clear").clicked {
+        if ui.button("clear").clicked() {
             for (e, r) in rewrites.iter() {
                 if r != &macro_rewrite() && r != &fork_rewrite() {
-                    commands.despawn(e);
+                    commands.despawn_recursive(e);
                 }
             }
 
             for (e, _) in free_patterns.iter() {
-                commands.despawn(e);
+                commands.despawn_recursive(e);
             }
         }
-        if ui.button("step").clicked {
+        if ui.button("step").clicked() {
             step_ars(commands, materials, font, rewrites, free_patterns);
         }
     });
@@ -463,7 +802,7 @@ fn step_ars(
         if let Some((rewrite, rewrite_entity)) = candidate_rewrites.pop() {
             if let Ok(bindings) = rewrite.0.bind(&pattern) {
                 println!("Bindings {:?}", bindings);
-                commands.despawn(pattern_entity);
+                commands.despawn_recursive(pattern_entity);
                 spent_rewrites.insert(rewrite_entity);
 
                 if rewrite == macro_rewrite() {
@@ -480,7 +819,7 @@ fn step_ars(
                             println!("Dropping identity rewrite");
                             continue;
                         }
-                        spawn_rewrite(commands, &materials, Rewrite(pattern, rewrite));
+                        spawn_rewrite(commands, &materials, &font, Rewrite(pattern, rewrite));
                     }
                 } else if rewrite == fork_rewrite() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
@@ -497,7 +836,7 @@ fn step_ars(
                     }
                 } else {
                     let rewritten_pattern = rewrite.1.apply(bindings);
-                    commands.despawn(rewrite_entity);
+                    commands.despawn_recursive(rewrite_entity);
                     spawn_pattern(commands, &materials, &font, rewritten_pattern);
                 }
             }
