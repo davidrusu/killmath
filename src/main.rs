@@ -5,8 +5,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 
+use bevy::input::{
+    mouse::{MouseButtonInput, MouseMotion, MouseWheel},
+    ElementState,
+};
 use bevy::prelude::*;
+use bevy::render::camera::Camera;
 use bevy::text::CalculatedSize;
+use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
 
 fn unique_hole() -> String {
@@ -29,9 +35,11 @@ fn main() {
         .add_system(persistence.system())
         .add_system(ars_layout.system())
         .add_system(update_positions.system())
-        .add_system(ars_kinematics.system())
+        .add_system(kinematics_system.system())
         .add_system(ars_term_bg.system())
         .add_system(rewrite_layout.system())
+        .add_system(print_mouse_events_system.system())
+        .add_system(focus_system.system())
         .add_system(propagate_bboxes.system())
         .run();
 }
@@ -77,7 +85,7 @@ fn spawn_rewrite(
                             color: Color::WHITE,
                         },
                         TextAlignment {
-                            vertical: VerticalAlign::Center,
+                            vertical: VerticalAlign::Bottom,
                             horizontal: HorizontalAlign::Left,
                         },
                     ),
@@ -117,7 +125,7 @@ fn spawn_rewrite(
                             color: Color::WHITE,
                         },
                         TextAlignment {
-                            vertical: VerticalAlign::Center,
+                            vertical: VerticalAlign::Bottom,
                             horizontal: HorizontalAlign::Left,
                         },
                     ),
@@ -158,7 +166,7 @@ fn spawn_pattern(
                     color: Color::WHITE,
                 },
                 TextAlignment {
-                    vertical: VerticalAlign::Center,
+                    vertical: VerticalAlign::Bottom,
                     horizontal: HorizontalAlign::Left,
                 },
             ),
@@ -192,9 +200,11 @@ fn setup(
         .insert_resource(ARSTimer(Timer::from_seconds(0.01, true)))
         .insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
         .insert_resource(ListenerState::default())
+        .insert_resource(Pointer::default())
         .insert_resource(Materials {
             pattern_color: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.3).into()),
             rewrite_color: materials.add(Color::rgba(0.35, 0.4, 0.1, 0.5).into()),
+            highlight_color: materials.add(Color::rgba(1.0, 0.0, 0.0, 0.5).into()),
             font_color: materials.add(Color::rgb(0.9, 0.9, 0.9).into()),
             surfboard_line_color: materials.add(Color::rgb(0.0, 0.0, 0.0).into()),
         })
@@ -215,175 +225,129 @@ fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font:
 }
 
 fn ars_layout(
-    time: Res<Time>,
-    mut timer: ResMut<ARSTimer>,
+    timer: ResMut<ARSTimer>,
     bboxes: Query<(Entity, &BBox), With<ARS>>,
     mut kinematics: Query<&mut Kinematics, With<ARS>>,
 ) {
-    if !timer.0.tick(time.delta_seconds()).just_finished() {
+    if !timer.0.just_finished() {
         return;
     }
-
     for (e_1, bbox_1) in bboxes.iter() {
         for (e_2, bbox_2) in bboxes.iter() {
+            if kinematics.get_mut(e_1).is_err() || kinematics.get_mut(e_2).is_err() {
+                continue;
+            };
             if e_1 == e_2 {
                 continue;
             }
 
             let buffer = 10.0;
-            let height_1 = bbox_1.upper_right.y - bbox_1.lower_left.y + buffer;
-            let height_2 = bbox_2.upper_right.y - bbox_2.lower_left.y + buffer;
-            let width_1 = bbox_1.upper_right.x - bbox_1.lower_left.x + buffer;
-            let width_2 = bbox_2.upper_right.x - bbox_2.lower_left.x + buffer;
-            let combined_height = height_1 + height_2;
-            let combined_width = width_1 + width_2;
-            assert!(height_1 >= 0.0);
-            assert!(width_1 >= 0.0);
-            assert!(height_2 >= 0.0);
-            assert!(width_2 >= 0.0);
+            let bbox_1 = bbox_1.buffer(buffer);
+            let bbox_2 = bbox_2.buffer(buffer);
 
-            let delta = (bbox_2.upper_right - bbox_1.upper_right);
+            let delta = bbox_2.center() - bbox_1.center();
 
-            if delta.x > 0.0 && delta.x > width_2 {
+            if delta.x.abs() > (bbox_1.width() + bbox_2.width()) * 0.5 {
                 continue;
             }
-            if delta.x < 0.0 && delta.x < -width_1 {
-                continue;
-            }
-            if delta.y > 0.0 && delta.y > height_2 {
-                continue;
-            }
-            if delta.y < 0.0 && delta.y < -height_1 {
+            if delta.y.abs() > (bbox_1.height() + bbox_2.height()) * 0.5 {
                 continue;
             }
 
-            // let upper_gap = bbox_1.upper_right.y - bbox_2.lower_left.y;
-            // let left_gap = bbox_1.lower_left.x - bbox_2.upper_right.x;
-            // println!(
-            //     "upper_gap: {} < 0.0 || {} > {}",
-            //     upper_gap, upper_gap, combined_height
-            // );
-            // if upper_gap < 0.0 || upper_gap > combined_height {
-            //     continue;
-            // }
-            // println!(
-            //     "left_gap: {} < 0.0 || {} > {}",
-            //     left_gap, left_gap, combined_width
-            // );
-            // if left_gap < 0.0 || left_gap > combined_width {
-            //     continue;
-            // }
+            let push_vecs = vec![
+                Vec2::new(0.0, (bbox_2.top() - bbox_1.bottom()).y),
+                Vec2::new((bbox_2.right() - bbox_1.left()).x, 0.0),
+                Vec2::new(0.0, (bbox_2.bottom() - bbox_1.top()).y),
+                Vec2::new((bbox_2.left() - bbox_1.right()).x, 0.0),
+            ];
+            let push_vec = push_vecs
+                .into_iter()
+                .min_by(|a, b| a.length().partial_cmp(&b.length()).unwrap())
+                .unwrap();
 
-            let mut push_vec = Vec2::default();
-
-            push_vec.x = if delta.x > 0.0 {
-                width_2 - delta.x
-            } else {
-                delta.x - width_1
-            };
-            push_vec.y = if delta.y > 0.0 {
-                height_2 - delta.y
-            } else {
-                delta.y - height_1
-            };
-
-            if push_vec.x.abs() > push_vec.y.abs() {
-                push_vec.x *= 0.2;
-            } else {
-                push_vec.y *= 0.2;
-            }
-
-            if push_vec.length() < 1. {
-                continue;
-            }
-            push_vec *= 0.01;
-            push_vec = push_vec.normalize() * push_vec.length().min(10.);
             if let Ok(mut e_kin) = kinematics.get_mut(e_1) {
-                e_kin.vel -= push_vec;
-            }
-            if let Ok(mut e_kin) = kinematics.get_mut(e_2) {
                 e_kin.vel += push_vec;
             }
         }
     }
 }
 
-fn ars_kinematics(
+fn kinematics_system(
     time: Res<Time>,
     mut timer: ResMut<ARSTimer>,
     mut kinematics: Query<&mut Kinematics>,
 ) {
-    if !timer.0.just_finished() {
+    if !timer.0.tick(time.delta_seconds()).just_finished() {
         return;
     }
     for mut k in kinematics.iter_mut() {
-        k.vel = k.vel - k.pos.normalize() * 1.0;
         k.pos = k.pos + k.vel * time.delta_seconds();
+        k.vel = k.vel - k.pos * 0.1;
         k.vel *= 0.8;
     }
 }
 
-fn update_positions(mut kin_and_trans: Query<(&Kinematics, &mut Transform)>) {
+fn update_positions(mut kin_and_trans: Query<(&Kinematics, &BBox, &mut GlobalTransform)>) {
     //println!("Updating positions");
-    for (kinematics, mut transform) in kin_and_trans.iter_mut() {
-        transform.translation.x = kinematics.pos.x;
-        transform.translation.y = kinematics.pos.y;
+    for (kinematics, bbox, mut transform) in kin_and_trans.iter_mut() {
+        transform.translation.x = kinematics.pos.x + bbox.width() * 0.5;
+        transform.translation.y = kinematics.pos.y + bbox.height() * 0.5;
     }
 }
 
 fn ars_term_bg(
-    calculated_size_q: Query<(Entity, &CalculatedSize, &Children), With<TextWithBG>>,
+    calculated_size_q: Query<(&CalculatedSize, &Children), With<TextWithBG>>,
     mut sprites: Query<(&mut Sprite, &mut Transform), With<PatternBG>>,
 ) {
-    for (parent, calculated_size, children) in calculated_size_q.iter() {
+    for (calculated_size, children) in calculated_size_q.iter() {
         for child in children.iter() {
             if let Ok((mut s, mut trans)) = sprites.get_mut(*child) {
-                let margin = 10.0;
+                let margin = 0.0;
                 s.size = Vec2::new(
                     calculated_size.size.width + margin,
-                    calculated_size.size.height,
+                    calculated_size.size.height + margin,
                 );
                 trans.translation.x = -calculated_size.size.width * 0.5;
+                trans.translation.y = -calculated_size.size.height * 0.5;
             }
         }
     }
 }
 
 fn rewrite_layout(
-    rewrites: Query<(Entity, &Children, &Transform), With<ARS>>,
+    terms: Query<&Children, With<Rewrite>>,
     mut top_patterns: Query<(&mut Transform, &CalculatedSize), With<TopPattern>>,
     mut surfboards: Query<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
     mut bottom_patterns: Query<(&mut Transform, &CalculatedSize), With<BottomPattern>>,
 ) {
-    for (parent, children, parent_trans) in rewrites.iter() {
+    for children in terms.iter() {
         let mut top_height = None;
         let mut top_width = None;
         let mut bottom_height = None;
         let mut bottom_width = None;
         for child in children.iter() {
-            if let Ok((trans, calc_size)) = top_patterns.get_mut(*child) {
+            if let Ok((_, calc_size)) = top_patterns.get_mut(*child) {
                 top_height = Some(calc_size.size.height);
                 top_width = Some(calc_size.size.width);
             }
-            if let Ok((trans, calc_size)) = bottom_patterns.get_mut(*child) {
+            if let Ok((_, calc_size)) = bottom_patterns.get_mut(*child) {
                 bottom_height = Some(calc_size.size.height);
                 bottom_width = Some(calc_size.size.width);
             }
         }
-        if let (Some(top_h), Some(top_w), Some(bottom_h), Some(bottom_w)) =
-            (top_height, top_width, bottom_height, bottom_width)
-        {
+        if let (Some(top_h), Some(top_w), Some(bottom_w)) = (top_height, top_width, bottom_width) {
             let rewrite_w = top_w.max(bottom_w);
+            let buffer = 5.0;
             for child in children.iter() {
                 if let Ok((mut trans, mut sprite)) = surfboards.get_mut(*child) {
                     let surfboard_w = rewrite_w + 20.0;
                     sprite.size = Vec2::new(surfboard_w, 1.5);
-                    trans.translation.y = -top_h;
+                    trans.translation.y = -top_h - buffer;
                     trans.translation.x = -rewrite_w * 0.5;
                     // trans.translation.x = -rewrite_w * 0.5;
                 }
                 if let Ok((mut trans, _)) = bottom_patterns.get_mut(*child) {
-                    trans.translation.y = -(top_h + bottom_h * 0.5 + 5.);
+                    trans.translation.y = -(top_h + buffer * 2.0);
                     trans.translation.x = -(rewrite_w - bottom_w) * 0.5;
                 }
                 if let Ok((mut trans, _)) = top_patterns.get_mut(*child) {
@@ -401,14 +365,14 @@ fn propagate_bboxes(
     transforms: Query<&Transform, With<BBox>>,
     parents: Query<(Entity, &Children), With<BBox>>,
     global_transforms: Query<&GlobalTransform, With<BBox>>,
+    roots: Query<Entity, Without<Parent>>,
 ) {
     for (e, sprite) in sprites.iter() {
-        let bbox = bboxes.get_mut(e);
-        let trans = transforms.get(e);
-        if let (Ok(mut bbox), Ok(trans)) = (bbox, trans) {
-            let pos = trans.translation;
-            bbox.upper_right = sprite.size * 0.5;
-            bbox.lower_left = -sprite.size * 0.5;
+        if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
+            bbox.upper_right = sprite.size * 0.5 + trans.translation.truncate();
+            bbox.lower_left = -sprite.size * 0.5 + trans.translation.truncate();
+            assert!(bbox.height() >= 0.0, "{:?}", bbox);
+            assert!(bbox.width() >= 0.0, "{:?}", bbox);
         }
     }
 
@@ -417,27 +381,123 @@ fn propagate_bboxes(
 
         for child in children.iter() {
             let child_bbox = bboxes.get_mut(*child);
-            let trans = transforms.get(*child);
-            if let (Ok(child_bbox), Ok(trans)) = (child_bbox, trans) {
-                let pos = trans.translation.truncate();
-                let upper_right = pos + child_bbox.upper_right;
-                let lower_left = pos + child_bbox.lower_left;
-                parent_bbox.upper_right = upper_right.max(parent_bbox.upper_right);
-                parent_bbox.lower_left = lower_left.min(parent_bbox.lower_left);
+            if let Ok(child_bbox) = child_bbox {
+                parent_bbox.upper_right = child_bbox.upper_right.max(parent_bbox.upper_right);
+                parent_bbox.lower_left = child_bbox.lower_left.min(parent_bbox.lower_left);
+                assert!(parent_bbox.height() >= 0.0, "{:?}", parent_bbox);
+                assert!(parent_bbox.width() >= 0.0, "{:?}", parent_bbox);
             }
         }
 
-        let global_translation = global_transforms
-            .get(parent)
-            .ok()
-            .cloned()
-            .unwrap_or_default()
-            .translation
-            .truncate();
+        let mut global_translation = if roots.get(parent).is_ok() {
+            global_transforms
+                .get(parent)
+                .ok()
+                .cloned()
+                .unwrap_or_default()
+                .translation
+                .truncate()
+        } else {
+            transforms
+                .get(parent)
+                .ok()
+                .cloned()
+                .unwrap_or_default()
+                .translation
+                .truncate()
+        };
+        if global_translation.x.is_nan() || global_translation.y.is_nan() {
+            global_translation = Default::default();
+        }
 
         if let Ok(mut bbox) = bboxes.get_mut(parent) {
+            assert!(bbox.height() >= 0.0, "{:?}", bbox);
+            assert!(bbox.width() >= 0.0, "{:?}", bbox);
             bbox.upper_right = parent_bbox.upper_right + global_translation;
             bbox.lower_left = parent_bbox.lower_left + global_translation;
+            assert!(bbox.height() >= 0.0, "{:?}", bbox);
+            assert!(bbox.width() >= 0.0, "{:?}", bbox);
+        }
+    }
+}
+
+// This system prints out all mouse events as they come in
+fn print_mouse_events_system(
+    windows: Res<Windows>,
+    mut pointer: ResMut<Pointer>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    mut mouse_button_input_events: EventReader<MouseButtonInput>,
+    mut mouse_motion_events: EventReader<MouseMotion>,
+    mut cursor_moved_events: EventReader<CursorMoved>,
+    mut mouse_wheel_events: EventReader<MouseWheel>,
+    holdable_entities: Query<(Entity, &BBox, &GlobalTransform), With<ARS>>,
+) {
+    for event in mouse_button_input_events.iter() {
+        match event {
+            MouseButtonInput {
+                button: MouseButton::Left,
+                state,
+            } => {
+                pointer.drag_start = pointer.pos;
+                pointer.down = state == &ElementState::Pressed;
+            }
+            event => println!("{:?}", event),
+        }
+    }
+
+    for _event in mouse_motion_events.iter() {
+        //println!("{:?}", event);
+    }
+
+    for event in cursor_moved_events.iter() {
+        if let Some(window) = windows.get(event.id) {
+            pointer.pos = event.position;
+        }
+    }
+
+    for _event in mouse_wheel_events.iter() {
+        //println!("{:?}", event);
+    }
+
+    if !pointer.down {
+        pointer.holding = None;
+    }
+    if let Some((camera, cam_trans)) = camera_query.iter().next() {
+        if pointer.down && pointer.holding.is_none() {
+            for (entity, bbox, trans) in holdable_entities.iter() {
+                if let Some(pos) = camera.world_to_screen(&windows, cam_trans, trans.translation) {
+                    let bbox_on_screen = BBox {
+                        upper_right: pos,
+                        lower_left: pos - bbox.size(),
+                    };
+                    if bbox_on_screen.contains(pointer.pos) {
+                        pointer.holding = Some(entity);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn focus_system(
+    windows: Res<Windows>,
+    pointer: Res<Pointer>,
+    mut terms: Query<(&BBox, &GlobalTransform, &mut Kinematics), With<ARS>>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+) {
+    if let (Some((camera, cam_trans)), Some(holding_entity)) =
+        (camera_query.iter().next(), pointer.holding)
+    {
+        if let Ok((bbox, trans, mut kin)) = terms.get_mut(holding_entity) {
+            if let Some(pos) = camera.world_to_screen(&windows, cam_trans, trans.translation) {
+                let bbox_on_screen = BBox {
+                    upper_right: pos,
+                    lower_left: pos - bbox.size(),
+                };
+                kin.pos += (pointer.pos - bbox_on_screen.center()) * 0.5;
+                kin.vel *= 0.0;
+            }
         }
     }
 }
@@ -466,8 +526,7 @@ fn persistence(
                 continue;
             }
 
-            tmp.write_all(format!("macro {} {}\n", rewrite.0, rewrite.1).as_bytes())
-                .unwrap();
+            tmp.write_all(format!("{}\n", rewrite).as_bytes()).unwrap();
         }
     }
 
@@ -490,19 +549,76 @@ struct BottomPattern;
 struct FollowParent;
 struct TextWithBG;
 #[derive(Default, Debug)]
+struct Pointer {
+    down: bool,
+    pos: Vec2,
+    drag_start: Vec2,
+    holding: Option<Entity>,
+}
+#[derive(Default, Debug)]
 struct BBox {
     upper_right: Vec2,
     lower_left: Vec2,
 }
 
+impl BBox {
+    fn buffer(&self, buf: f32) -> Self {
+        let buf = Vec2::new(buf, buf);
+        Self {
+            upper_right: self.upper_right + buf,
+            lower_left: self.lower_left - buf,
+        }
+    }
+
+    fn size(&self) -> Vec2 {
+        Vec2::new(self.width(), self.height())
+    }
+
+    fn width(&self) -> f32 {
+        self.upper_right.x - self.lower_left.x
+    }
+
+    fn height(&self) -> f32 {
+        self.upper_right.y - self.lower_left.y
+    }
+
+    fn center(&self) -> Vec2 {
+        (self.upper_right + self.lower_left) * 0.5
+    }
+
+    fn top(&self) -> Vec2 {
+        self.center() + Vec2::new(0.0, self.height() * 0.5)
+    }
+
+    fn bottom(&self) -> Vec2 {
+        self.center() + Vec2::new(0.0, -self.height() * 0.5)
+    }
+
+    fn right(&self) -> Vec2 {
+        self.center() + Vec2::new(self.width() * 0.5, 0.0)
+    }
+
+    fn left(&self) -> Vec2 {
+        self.center() + Vec2::new(-self.width() * 0.5, 0.0)
+    }
+
+    fn contains(&self, p: Vec2) -> bool {
+        p.x <= self.upper_right.x
+            && p.x >= self.lower_left.x
+            && p.y <= self.upper_right.y
+            && p.y >= self.lower_left.y
+    }
+}
+
 struct Materials {
     pattern_color: Handle<ColorMaterial>,
     rewrite_color: Handle<ColorMaterial>,
+    highlight_color: Handle<ColorMaterial>,
     surfboard_line_color: Handle<ColorMaterial>,
     font_color: Handle<ColorMaterial>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Kinematics {
     pos: Vec2,
     vel: Vec2,
@@ -525,6 +641,12 @@ impl Kinematics {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Rewrite(Pattern, Pattern);
+
+impl std::fmt::Display for Rewrite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[macro {} {}]", self.0, self.1)
+    }
+}
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 enum Pattern {
@@ -651,7 +773,7 @@ impl Pattern {
                 let mut pprint = format!("{}[", if parent_wrapped { &indent } else { "" });
                 for pat in seq.iter().intersperse(&Self::Sym(" ".into())) {
                     cumulative_complexity += pat.complexity();
-                    if cumulative_complexity > 30 {
+                    if cumulative_complexity > 25 {
                         cumulative_complexity = 0;
                         wrapped = true;
                         pprint = format!("{}\n{}", pprint, indent);
@@ -708,7 +830,7 @@ impl Pattern {
         match self {
             Self::Hole(hole) => vec![hole.clone()].into_iter().collect(),
             Self::Seq(seq) => seq.iter().flat_map(|p| p.holes()).collect(),
-            pat => Default::default(),
+            _ => Default::default(),
         }
     }
 
@@ -722,8 +844,7 @@ impl Pattern {
 
     fn complexity(&self) -> usize {
         match self {
-            Self::Sym(s) => s.len(),
-            Self::Hole(h) => 1,
+            Self::Sym(s) | Self::Hole(s) => ((s.len() as f64).log2() as usize) + 1,
             Self::Seq(seq) => seq.iter().map(Self::complexity).sum::<usize>() + 1,
         }
     }
@@ -793,7 +914,7 @@ fn step_ars(
             if spent_rewrites.contains(&rewrite_entity) {
                 continue;
             }
-            if let Ok(bindings) = rewrite.0.bind(&pattern) {
+            if let Ok(_bindings) = rewrite.0.bind(&pattern) {
                 candidate_rewrites.push((rewrite.clone(), rewrite_entity));
             }
         }
