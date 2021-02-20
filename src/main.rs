@@ -15,10 +15,6 @@ use bevy::text::CalculatedSize;
 use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
 
-fn unique_hole() -> String {
-    format!("{}", rand::random::<u16>())
-}
-
 /// This example illustrates the various features of Bevy UI.
 fn main() {
     App::build()
@@ -31,7 +27,8 @@ fn main() {
         )
         .add_system(listener_prompt.system())
         // .add_system(ars_ui.system())
-        // .add_system(ars.system())
+        .add_system(update_listener.system())
+        .add_system(ars.system())
         .add_system(persistence.system())
         .add_system(ars_layout.system())
         .add_system(update_positions.system())
@@ -44,9 +41,9 @@ fn main() {
         .run();
 }
 
-fn macro_rewrite() -> Rewrite {
+fn rewrite_rewrite() -> Rewrite {
     Rewrite(
-        Pattern::parse("macro ?pattern ?rewrite".into()),
+        Pattern::parse("?pattern -> ?rewrite".into()),
         Pattern::parse("<defined>"),
     )
 }
@@ -95,7 +92,7 @@ fn spawn_rewrite(
                     parent
                         .spawn(SpriteBundle {
                             material: materials.rewrite_color.clone(),
-                            sprite: Sprite::new(Vec2::new(100.0, 100.0)),
+                            sprite: Sprite::new(Vec2::default()),
                             ..Default::default()
                         })
                         .with(PatternBG)
@@ -197,13 +194,15 @@ fn setup(
 ) {
     commands
         .spawn(OrthographicCameraBundle::new_2d())
+        .insert_resource(Holes(0))
         .insert_resource(ARSTimer(Timer::from_seconds(0.01, true)))
+        .insert_resource(RewriteTimer(Timer::from_seconds(0.5, true)))
         .insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
         .insert_resource(ListenerState::default())
         .insert_resource(Pointer::default())
         .insert_resource(Materials {
             pattern_color: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.3).into()),
-            rewrite_color: materials.add(Color::rgba(0.35, 0.4, 0.1, 0.5).into()),
+            rewrite_color: materials.add(Color::rgba(1.0, 0.8, 0.1, 0.1).into()),
             highlight_color: materials.add(Color::rgba(1.0, 0.0, 0.0, 0.5).into()),
             font_color: materials.add(Color::rgb(0.9, 0.9, 0.9).into()),
             surfboard_line_color: materials.add(Color::rgb(0.0, 0.0, 0.0).into()),
@@ -212,7 +211,7 @@ fn setup(
 }
 
 fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font: Res<ARSFont>) {
-    spawn_rewrite(commands, &materials, &font, macro_rewrite());
+    spawn_rewrite(commands, &materials, &font, rewrite_rewrite());
     spawn_rewrite(commands, &materials, &font, fork_rewrite());
 
     if let Ok(reader) = File::open("listings.nimic").map(BufReader::new) {
@@ -266,7 +265,7 @@ fn ars_layout(
                 .unwrap();
 
             if let Ok(mut e_kin) = kinematics.get_mut(e_1) {
-                e_kin.vel += push_vec;
+                e_kin.vel += push_vec * 2.0;
             }
         }
     }
@@ -522,7 +521,7 @@ fn persistence(
         }
 
         for rewrite in rewrites.iter() {
-            if rewrite == &macro_rewrite() || rewrite == &fork_rewrite() {
+            if rewrite.is_primitive() {
                 continue;
             }
 
@@ -539,7 +538,10 @@ struct ListenerState {
     command: String,
 }
 
+#[derive(Default)]
+struct Holes(u64);
 struct ARSTimer(Timer);
+struct RewriteTimer(Timer);
 struct PersistenceTimer(Timer);
 struct ARS;
 struct PatternBG;
@@ -642,9 +644,19 @@ impl Kinematics {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Rewrite(Pattern, Pattern);
 
+impl Rewrite {
+    fn is_primitive(&self) -> bool {
+        self == &rewrite_rewrite() || self == &fork_rewrite()
+    }
+
+    fn pprint(&self) -> String {
+        format!("[{} -> {}]", self.0.pprint(), self.1.pprint())
+    }
+}
+
 impl std::fmt::Display for Rewrite {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[macro {} {}]", self.0, self.1)
+        write!(f, "[{} -> {}]", self.0, self.1)
     }
 }
 
@@ -773,10 +785,12 @@ impl Pattern {
                 let mut pprint = format!("{}[", if parent_wrapped { &indent } else { "" });
                 for pat in seq.iter().intersperse(&Self::Sym(" ".into())) {
                     cumulative_complexity += pat.complexity();
-                    if cumulative_complexity > 25 {
-                        cumulative_complexity = 0;
+                    if cumulative_complexity > 15 {
+                        //cumulative_complexity = 0;
                         wrapped = true;
-                        pprint = format!("{}\n{}", pprint, indent);
+                        if pat != &Self::Sym(" ".into()) {
+                            pprint = format!("{}\n{}", pprint, indent);
+                        }
                     }
                     pprint = format!(
                         "{}{}",
@@ -852,6 +866,8 @@ impl Pattern {
 
 fn listener_prompt(
     commands: &mut Commands,
+    mut rewrite_timer: ResMut<RewriteTimer>,
+    holes: ResMut<Holes>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
@@ -862,9 +878,7 @@ fn listener_prompt(
     let ctx = &mut egui_context.ctx;
     egui::Window::new("Listener").show(ctx, |ui| {
         let listener_resp = ui.text_edit_multiline(&mut listener_state.command);
-        if (ui.button("parse").clicked() || listener_resp.lost_kb_focus())
-            && !listener_state.command.is_empty()
-        {
+        if ui.button("parse").clicked() && !listener_state.command.is_empty() {
             spawn_pattern(
                 commands,
                 &materials,
@@ -875,7 +889,7 @@ fn listener_prompt(
         }
         if ui.button("clear").clicked() {
             for (e, r) in rewrites.iter() {
-                if r != &macro_rewrite() && r != &fork_rewrite() {
+                if !r.is_primitive() {
                     commands.despawn_recursive(e);
                 }
             }
@@ -884,14 +898,39 @@ fn listener_prompt(
                 commands.despawn_recursive(e);
             }
         }
+        if rewrite_timer.0.paused() {
+            if ui.button("unpause").clicked() {
+                rewrite_timer.0.unpause()
+            }
+        } else {
+            if ui.button("pause").clicked() {
+                rewrite_timer.0.pause()
+            }
+        }
         if ui.button("step").clicked() {
-            step_ars(commands, materials, font, rewrites, free_patterns);
+            step_ars(commands, holes, materials, font, rewrites, free_patterns);
         }
     });
 }
 
+fn update_listener(
+    mut listener_state: ResMut<ListenerState>,
+    pointer: Res<Pointer>,
+    rewrites: Query<&Rewrite>,
+    patterns: Query<&Pattern>,
+) {
+    if let Some(holding_entity) = pointer.holding {
+        if let Ok(rewrite) = rewrites.get(holding_entity) {
+            listener_state.command = rewrite.pprint()
+        } else if let Ok(pat) = patterns.get(holding_entity) {
+            listener_state.command = pat.pprint()
+        };
+    }
+}
+
 fn step_ars(
     commands: &mut Commands,
+    mut holes: ResMut<Holes>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite), With<ARS>>,
@@ -905,7 +944,10 @@ fn step_ars(
         let pattern_holes: BTreeMap<_, _> = pattern
             .holes()
             .into_iter()
-            .map(|h| (h, unique_hole()))
+            .map(|h| {
+                holes.0 += 1;
+                (h, format!("{}", holes.0))
+            })
             .collect();
 
         let pattern = pattern.clone().rename_holes(pattern_holes);
@@ -926,7 +968,7 @@ fn step_ars(
                 commands.despawn_recursive(pattern_entity);
                 spent_rewrites.insert(rewrite_entity);
 
-                if rewrite == macro_rewrite() {
+                if rewrite == rewrite_rewrite() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
                     if bindings_map.len() != bindings.len() {
                         panic!("Unification is not supported yet");
@@ -936,10 +978,6 @@ fn step_ars(
                         bindings_map.get("pattern").cloned(),
                         bindings_map.get("rewrite").cloned(),
                     ) {
-                        if pattern == rewrite {
-                            println!("Dropping identity rewrite");
-                            continue;
-                        }
                         spawn_rewrite(commands, &materials, &font, Rewrite(pattern, rewrite));
                     }
                 } else if rewrite == fork_rewrite() {
@@ -967,7 +1005,8 @@ fn step_ars(
 
 fn ars(
     time: Res<Time>,
-    mut timer: ResMut<ARSTimer>,
+    mut timer: ResMut<RewriteTimer>,
+    holes: ResMut<Holes>,
     commands: &mut Commands,
     materials: Res<Materials>,
     font: Res<ARSFont>,
@@ -978,7 +1017,7 @@ fn ars(
         return;
     }
 
-    step_ars(commands, materials, font, rewrites, free_patterns);
+    step_ars(commands, holes, materials, font, rewrites, free_patterns);
 }
 
 fn ars_ui(
