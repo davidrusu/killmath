@@ -1,9 +1,10 @@
 { pkgs ? import <nixpkgs> {} }:
 let
 in
-  pkgs.mkShell {
-    buildInputs = [
-      (pkgs.rustChannelOf { channel = "nightly"; date = "2021-02-17"; }).rust
+pkgs.stdenv.mkDerivation {
+  name = "nimic";
+  buildInputs = [
+      (pkgs.rustChannelOf { channel = "nightly"; date = "2021-03-02"; }).rust
       pkgs.lld_11
       pkgs.clang_11
       pkgs.alsaLib
@@ -18,7 +19,7 @@ in
       pkgs.xorg.libXi
       pkgs.xorg.libXrandr
       pkgs.udev
-    ];
+  ];
 
     LD_LIBRARY_PATH = "/run/opengl-driver/lib:${with pkgs; lib.makeLibraryPath [
       pkgs.x11
