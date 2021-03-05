@@ -6,8 +6,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 
 use bevy::input::{
+    keyboard::KeyCode,
     mouse::{MouseButtonInput, MouseMotion, MouseWheel},
-    ElementState,
+    ElementState, Input,
 };
 use bevy::prelude::*;
 use bevy::render::camera::Camera;
@@ -26,7 +27,9 @@ fn main() {
             SystemStage::single(spawn_initial_state.system()),
         )
         .add_system(listener_prompt.system())
+        .add_system(keyboard_input_system.system())
         // .add_system(ars_ui.system())
+        .add_system(attract_matching_patterns_and_rewrites.system())
         .add_system(update_listener.system())
         .add_system(ars.system())
         .add_system(persistence.system())
@@ -56,6 +59,7 @@ fn fork_rewrite() -> Rewrite {
 }
 
 fn spawn_rewrite(
+    pos: Vec2,
     commands: &mut Commands,
     materials: &Res<Materials>,
     font: &Res<ARSFont>,
@@ -66,7 +70,10 @@ fn spawn_rewrite(
         .spawn((
             ARS,
             rewrite.clone(),
-            Kinematics::random(),
+            Kinematics {
+                pos,
+                ..Default::default()
+            },
             GlobalTransform::default(),
             Transform::default(),
             BBox::default(),
@@ -106,7 +113,7 @@ fn spawn_rewrite(
             parent
                 .spawn(SpriteBundle {
                     material: materials.surfboard_line_color.clone(),
-                    sprite: Sprite::new(Vec2::new(500.0, 10.0)),
+                    sprite: Sprite::new(Vec2::new(1.0, 1.0)),
                     ..Default::default()
                 })
                 .with(SurfboardLine)
@@ -132,7 +139,7 @@ fn spawn_rewrite(
                     parent
                         .spawn(SpriteBundle {
                             material: materials.rewrite_color.clone(),
-                            sprite: Sprite::new(Vec2::new(100.0, 100.0)),
+                            sprite: Sprite::new(Vec2::new(1.0, 1.0)),
                             ..Default::default()
                         })
                         .with(PatternBG)
@@ -147,6 +154,7 @@ fn spawn_rewrite(
 }
 
 fn spawn_pattern(
+    pos: Vec2,
     commands: &mut Commands,
     materials: &Res<Materials>,
     font: &Res<ARSFont>,
@@ -173,7 +181,7 @@ fn spawn_pattern(
             parent
                 .spawn(SpriteBundle {
                     material: materials.pattern_color.clone(),
-                    sprite: Sprite::new(Vec2::new(100.0, 100.0)),
+                    sprite: Sprite::new(Vec2::new(1.0, 1.0)),
                     ..Default::default()
                 })
                 .with(PatternBG)
@@ -182,7 +190,10 @@ fn spawn_pattern(
         .with(TextWithBG)
         .with(ARS)
         .with(pattern)
-        .with(Kinematics::random())
+        .with(Kinematics {
+            pos,
+            ..Default::default()
+        })
         .with(BBox::default());
 }
 
@@ -196,7 +207,7 @@ fn setup(
         .spawn(OrthographicCameraBundle::new_2d())
         .insert_resource(Holes(0))
         .insert_resource(ARSTimer(Timer::from_seconds(0.01, true)))
-        .insert_resource(RewriteTimer(Timer::from_seconds(0.5, true)))
+        .insert_resource(RewriteTimer(Timer::from_seconds(0.1, true)))
         .insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
         .insert_resource(ListenerState::default())
         .insert_resource(Pointer::default())
@@ -211,13 +222,31 @@ fn setup(
 }
 
 fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font: Res<ARSFont>) {
-    spawn_rewrite(commands, &materials, &font, rewrite_rewrite());
-    spawn_rewrite(commands, &materials, &font, fork_rewrite());
+    spawn_rewrite(
+        Kinematics::randome().pos,
+        commands,
+        &materials,
+        &font,
+        rewrite_rewrite(),
+    );
+    spawn_rewrite(
+        Kinematics::random().pos,
+        commands,
+        &materials,
+        &font,
+        fork_rewrite(),
+    );
 
     if let Ok(reader) = File::open("listings.nimic").map(BufReader::new) {
         for line in reader.lines() {
             if let Ok(pat) = line {
-                spawn_pattern(commands, &materials, &font, Pattern::parse(&pat));
+                spawn_pattern(
+                    Kinematics::random().pos * 10.0,
+                    commands,
+                    &materials,
+                    &font,
+                    Pattern::parse(&pat),
+                );
             }
         }
     }
@@ -240,7 +269,7 @@ fn ars_layout(
                 continue;
             }
 
-            let buffer = 10.0;
+            let buffer = 5.0;
             let bbox_1 = bbox_1.buffer(buffer);
             let bbox_2 = bbox_2.buffer(buffer);
 
@@ -265,7 +294,7 @@ fn ars_layout(
                 .unwrap();
 
             if let Ok(mut e_kin) = kinematics.get_mut(e_1) {
-                e_kin.vel += push_vec * 2.0;
+                e_kin.vel += push_vec;
             }
         }
     }
@@ -280,9 +309,9 @@ fn kinematics_system(
         return;
     }
     for mut k in kinematics.iter_mut() {
+        k.vel *= 0.95;
         k.pos = k.pos + k.vel * time.delta_seconds();
-        k.vel = k.vel - k.pos * 0.1;
-        k.vel *= 0.8;
+        // k.vel = k.vel - k.pos * 0.1;
     }
 }
 
@@ -610,6 +639,13 @@ impl BBox {
             && p.y <= self.upper_right.y
             && p.y >= self.lower_left.y
     }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        let delta = other.center() - self.center();
+
+        delta.x.abs() < (self.width() + other.width()) * 0.5
+            && delta.y.abs() < (self.height() + other.height()) * 0.5
+    }
 }
 
 struct Materials {
@@ -870,8 +906,8 @@ fn listener_prompt(
     holes: ResMut<Holes>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
-    rewrites: Query<(Entity, &Rewrite), With<ARS>>,
-    free_patterns: Query<(Entity, &Pattern), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
+    free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
     mut listener_state: ResMut<ListenerState>,
     mut egui_context: ResMut<EguiContext>,
 ) {
@@ -880,6 +916,7 @@ fn listener_prompt(
         let listener_resp = ui.text_edit_multiline(&mut listener_state.command);
         if ui.button("parse").clicked() && !listener_state.command.is_empty() {
             spawn_pattern(
+                Kinematics::random().pos * 10.,
                 commands,
                 &materials,
                 &font,
@@ -888,13 +925,13 @@ fn listener_prompt(
             listener_state.command = Default::default();
         }
         if ui.button("clear").clicked() {
-            for (e, r) in rewrites.iter() {
+            for (e, r, _) in rewrites.iter() {
                 if !r.is_primitive() {
                     commands.despawn_recursive(e);
                 }
             }
 
-            for (e, _) in free_patterns.iter() {
+            for (e, _, _) in free_patterns.iter() {
                 commands.despawn_recursive(e);
             }
         }
@@ -928,17 +965,66 @@ fn update_listener(
     }
 }
 
+/// This system prints 'A' key state
+fn keyboard_input_system(
+    commands: &mut Commands,
+    materials: Res<Materials>,
+    font: Res<ARSFont>,
+    mut listener_state: ResMut<ListenerState>,
+    keyboard_input: Res<Input<KeyCode>>,
+) {
+    if (keyboard_input.pressed(KeyCode::LControl) || keyboard_input.pressed(KeyCode::RControl))
+        && keyboard_input.pressed(KeyCode::Return)
+    {
+        if !listener_state.command.trim().is_empty() {
+            spawn_pattern(
+                Kinematics::random().pos * 10.0,
+                commands,
+                &materials,
+                &font,
+                Pattern::parse(&listener_state.command),
+            );
+            listener_state.command = Default::default();
+        }
+    }
+}
+
+fn attract_matching_patterns_and_rewrites(
+    mut rewrites: Query<(&Rewrite, &mut Kinematics)>,
+    mut patterns: Query<(&Pattern, &mut Kinematics)>,
+) {
+    let force = 100.;
+    for (pattern, mut pattern_kin) in patterns.iter_mut() {
+        for (rewrite, mut rewrite_kin) in rewrites.iter_mut() {
+            let delta = rewrite_kin.pos - pattern_kin.pos;
+            let dist = delta.length();
+            if dist > 1e-6 {
+                if rewrite.0.bind(&pattern).is_ok() {
+                    let force_vec =
+                        delta / dist.powf(1.5) * (force + (rewrite.0.complexity() as f32) * 10.0);
+                    pattern_kin.vel += force_vec;
+                    rewrite_kin.vel -= force_vec;
+                } else if dist < 400. {
+                    let force_vec = -delta / (dist + 1.5).powf(2.0) * 1000.;
+                    pattern_kin.vel += force_vec;
+                    rewrite_kin.vel -= force_vec;
+                }
+            }
+        }
+    }
+}
+
 fn step_ars(
     commands: &mut Commands,
     mut holes: ResMut<Holes>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
-    rewrites: Query<(Entity, &Rewrite), With<ARS>>,
-    free_patterns: Query<(Entity, &Pattern), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
+    free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
 ) {
     let mut spent_rewrites: BTreeSet<Entity> = Default::default();
 
-    for (pattern_entity, pattern) in free_patterns.iter() {
+    for (pattern_entity, pattern, pattern_bbox) in free_patterns.iter() {
         let mut candidate_rewrites: Vec<(Rewrite, Entity)> = Default::default();
 
         let pattern_holes: BTreeMap<_, _> = pattern
@@ -952,10 +1038,15 @@ fn step_ars(
 
         let pattern = pattern.clone().rename_holes(pattern_holes);
 
-        for (rewrite_entity, rewrite) in rewrites.iter() {
+        for (rewrite_entity, rewrite, rewrite_bbox) in rewrites.iter() {
             if spent_rewrites.contains(&rewrite_entity) {
                 continue;
             }
+
+            if !rewrite_bbox.overlaps(pattern_bbox) {
+                continue;
+            }
+
             if let Ok(_bindings) = rewrite.0.bind(&pattern) {
                 candidate_rewrites.push((rewrite.clone(), rewrite_entity));
             }
@@ -978,7 +1069,20 @@ fn step_ars(
                         bindings_map.get("pattern").cloned(),
                         bindings_map.get("rewrite").cloned(),
                     ) {
-                        spawn_rewrite(commands, &materials, &font, Rewrite(pattern, rewrite));
+                        let spawn_position =
+                            if let Ok((_, _, pat_bbox)) = rewrites.get(rewrite_entity) {
+                                pat_bbox.center()
+                            } else {
+                                eprintln!("couldn't find rewrite entity: {:?}", rewrite_entity);
+                                Vec2::default()
+                            };
+                        spawn_rewrite(
+                            spawn_position,
+                            commands,
+                            &materials,
+                            &font,
+                            Rewrite(pattern, rewrite),
+                        );
                     }
                 } else if rewrite == fork_rewrite() {
                     let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
@@ -990,13 +1094,33 @@ fn step_ars(
                         bindings_map.get("left").cloned(),
                         bindings_map.get("right").cloned(),
                     ) {
-                        spawn_pattern(commands, &materials, &font, left);
-                        spawn_pattern(commands, &materials, &font, right);
+                        let spawn_position =
+                            if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
+                                pat_bbox.center()
+                            } else {
+                                eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
+                                Vec2::default()
+                            };
+                        spawn_pattern(spawn_position, commands, &materials, &font, left);
+                        spawn_pattern(spawn_position, commands, &materials, &font, right);
                     }
                 } else {
+                    let spawn_position =
+                        if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
+                            pat_bbox.center()
+                        } else {
+                            eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
+                            Vec2::default()
+                        };
                     let rewritten_pattern = rewrite.1.apply(bindings);
                     commands.despawn_recursive(rewrite_entity);
-                    spawn_pattern(commands, &materials, &font, rewritten_pattern);
+                    spawn_pattern(
+                        spawn_position,
+                        commands,
+                        &materials,
+                        &font,
+                        rewritten_pattern,
+                    );
                 }
             }
         }
@@ -1010,8 +1134,8 @@ fn ars(
     commands: &mut Commands,
     materials: Res<Materials>,
     font: Res<ARSFont>,
-    rewrites: Query<(Entity, &Rewrite), With<ARS>>,
-    free_patterns: Query<(Entity, &Pattern), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
+    free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
 ) {
     if !timer.0.tick(time.delta_seconds()).just_finished() {
         return;
