@@ -4,13 +4,12 @@ version = "0.1.0"
 authors = ["David Rusu <davidrusu.me@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies.bevy]
-git = "https://github.com/bevyengine/bevy"
-# rev = "3475a64a2c04b237b4d3b8988722a48d29c17739"
-
 [dependencies]
 # { git = "https://github.com/bevyengine/bevy", rev = "7166a28bafa669eac40f5864cce8a150b330dd5f" }
 bevy_egui = { git = "https://github.com/jakobhellermann/bevy_egui", branch="bevy-0.5" }
 rand = "0.8.3"
+
+[dependencies.bevy]
+git = "https://github.com/bevyengine/bevy"
+# branch = "main"
+# rev = "3475a64a2c04b237b4d3b8988722a48d29c17739"

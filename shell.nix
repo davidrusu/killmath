@@ -4,7 +4,7 @@ in
 pkgs.stdenv.mkDerivation {
   name = "nimic";
   buildInputs = [
-      (pkgs.rustChannelOf { channel = "nightly"; date = "2021-03-02"; }).rust
+      (pkgs.rustChannelOf { channel = "nightly"; date = "2021-03-14"; }).rust
       pkgs.lld_11
       pkgs.clang_11
       pkgs.alsaLib

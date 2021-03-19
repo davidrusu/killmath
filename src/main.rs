@@ -34,13 +34,13 @@ fn main() {
         .add_system(ars.system())
         .add_system(persistence.system())
         .add_system(ars_layout.system())
-        .add_system(update_positions.system())
-        .add_system(kinematics_system.system())
+        //.add_system(update_positions.system())
+        .add_system(propagate_bboxes.system())
         .add_system(ars_term_bg.system())
         .add_system(rewrite_layout.system())
         .add_system(print_mouse_events_system.system())
         .add_system(focus_system.system())
-        .add_system(propagate_bboxes.system())
+        .add_system(kinematics_system.system())
         .run();
 }
 
@@ -85,7 +85,7 @@ fn spawn_rewrite(
                         rewrite.0.pprint(),
                         TextStyle {
                             font: font.0.clone(),
-                            font_size: 12.0,
+                            font_size: 24.0,
                             color: Color::WHITE,
                         },
                         TextAlignment {
@@ -100,11 +100,19 @@ fn spawn_rewrite(
                         .spawn(SpriteBundle {
                             material: materials.rewrite_color.clone(),
                             sprite: Sprite::new(Vec2::default()),
+                            visible: Visible {
+                                is_visible: false,
+                                ..Default::default()
+                            },
                             ..Default::default()
                         })
                         .with(PatternBG)
                         .with(FollowParent)
                         .with(BBox::default());
+                })
+                .with(Visible {
+                    is_visible: false,
+                    ..Default::default()
                 })
                 .with(TextWithBG)
                 .with(FollowParent)
@@ -114,6 +122,10 @@ fn spawn_rewrite(
                 .spawn(SpriteBundle {
                     material: materials.surfboard_line_color.clone(),
                     sprite: Sprite::new(Vec2::new(1.0, 1.0)),
+                    visible: Visible {
+                        is_visible: false,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 })
                 .with(SurfboardLine)
@@ -125,7 +137,7 @@ fn spawn_rewrite(
                         rewrite.1.pprint(),
                         TextStyle {
                             font: font.0.clone(),
-                            font_size: 12.0,
+                            font_size: 24.0,
                             color: Color::WHITE,
                         },
                         TextAlignment {
@@ -140,16 +152,28 @@ fn spawn_rewrite(
                         .spawn(SpriteBundle {
                             material: materials.rewrite_color.clone(),
                             sprite: Sprite::new(Vec2::new(1.0, 1.0)),
+                            visible: Visible {
+                                is_visible: false,
+                                ..Default::default()
+                            },
                             ..Default::default()
                         })
                         .with(PatternBG)
                         .with(FollowParent)
                         .with(BBox::default());
                 })
+                .with(Visible {
+                    is_visible: false,
+                    ..Default::default()
+                })
                 .with(TextWithBG)
                 .with(FollowParent)
                 .with(BottomPattern)
                 .with(BBox::default());
+        })
+        .with(Visible {
+            is_visible: false,
+            ..Default::default()
         });
 }
 
@@ -167,7 +191,7 @@ fn spawn_pattern(
                 pattern.pprint(),
                 TextStyle {
                     font: font.0.clone(),
-                    font_size: 12.0,
+                    font_size: 24.0,
                     color: Color::WHITE,
                 },
                 TextAlignment {
@@ -182,6 +206,10 @@ fn spawn_pattern(
                 .spawn(SpriteBundle {
                     material: materials.pattern_color.clone(),
                     sprite: Sprite::new(Vec2::new(1.0, 1.0)),
+                    visible: Visible {
+                        is_visible: false,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 })
                 .with(PatternBG)
@@ -194,7 +222,11 @@ fn spawn_pattern(
             pos,
             ..Default::default()
         })
-        .with(BBox::default());
+        .with(BBox::default())
+        .with(Visible {
+            is_visible: false,
+            ..Default::default()
+        });
 }
 
 struct ARSFont(Handle<Font>);
@@ -207,7 +239,7 @@ fn setup(
         .spawn(OrthographicCameraBundle::new_2d())
         .insert_resource(Holes(0))
         .insert_resource(ARSTimer(Timer::from_seconds(0.01, true)))
-        .insert_resource(RewriteTimer(Timer::from_seconds(0.1, true)))
+        .insert_resource(RewriteTimer(Timer::from_seconds(0.5, true)))
         .insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
         .insert_resource(ListenerState::default())
         .insert_resource(Pointer::default())
@@ -223,7 +255,7 @@ fn setup(
 
 fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font: Res<ARSFont>) {
     spawn_rewrite(
-        Kinematics::randome().pos,
+        Kinematics::random().pos,
         commands,
         &materials,
         &font,
@@ -303,23 +335,21 @@ fn ars_layout(
 fn kinematics_system(
     time: Res<Time>,
     mut timer: ResMut<ARSTimer>,
-    mut kinematics: Query<&mut Kinematics>,
+    mut kinematics: Query<(Entity, &mut Kinematics)>,
+    mut positions: Query<(&BBox, &mut GlobalTransform)>,
 ) {
     if !timer.0.tick(time.delta_seconds()).just_finished() {
         return;
     }
-    for mut k in kinematics.iter_mut() {
-        k.vel *= 0.95;
+    for (e, mut k) in kinematics.iter_mut() {
+        k.vel *= 0.9;
         k.pos = k.pos + k.vel * time.delta_seconds();
-        // k.vel = k.vel - k.pos * 0.1;
-    }
-}
+        k.vel = k.vel - k.pos * 0.001;
 
-fn update_positions(mut kin_and_trans: Query<(&Kinematics, &BBox, &mut GlobalTransform)>) {
-    //println!("Updating positions");
-    for (kinematics, bbox, mut transform) in kin_and_trans.iter_mut() {
-        transform.translation.x = kinematics.pos.x + bbox.width() * 0.5;
-        transform.translation.y = kinematics.pos.y + bbox.height() * 0.5;
+        if let Ok((bbox, mut transform)) = positions.get_mut(e) {
+            transform.translation.x = k.pos.x + bbox.width() * 0.5;
+            transform.translation.y = k.pos.y + bbox.height() * 0.5;
+        }
     }
 }
 
@@ -392,8 +422,10 @@ fn propagate_bboxes(
     sprites: Query<(Entity, &Sprite), With<BBox>>,
     transforms: Query<&Transform, With<BBox>>,
     parents: Query<(Entity, &Children), With<BBox>>,
-    global_transforms: Query<&GlobalTransform, With<BBox>>,
+    mut global_transforms: Query<&mut GlobalTransform, With<BBox>>,
     roots: Query<Entity, Without<Parent>>,
+    mut visibility: Query<&mut Visible>,
+    mut kin: Query<(&Kinematics)>,
 ) {
     for (e, sprite) in sprites.iter() {
         if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
@@ -401,6 +433,10 @@ fn propagate_bboxes(
             bbox.lower_left = -sprite.size * 0.5 + trans.translation.truncate();
             assert!(bbox.height() >= 0.0, "{:?}", bbox);
             assert!(bbox.width() >= 0.0, "{:?}", bbox);
+        }
+
+        if let Ok(mut v) = visibility.get_mut(e) {
+            v.is_visible = true;
         }
     }
 
@@ -419,9 +455,9 @@ fn propagate_bboxes(
 
         let mut global_translation = if roots.get(parent).is_ok() {
             global_transforms
-                .get(parent)
+                .get_mut(parent)
+                .map(|t| t.clone())
                 .ok()
-                .cloned()
                 .unwrap_or_default()
                 .translation
                 .truncate()
@@ -445,6 +481,16 @@ fn propagate_bboxes(
             bbox.lower_left = parent_bbox.lower_left + global_translation;
             assert!(bbox.height() >= 0.0, "{:?}", bbox);
             assert!(bbox.width() >= 0.0, "{:?}", bbox);
+
+            if let (Ok(k), Ok(mut transform)) = (kin.get(parent), global_transforms.get_mut(parent))
+            {
+                transform.translation.x = k.pos.x + bbox.width() * 0.5;
+                transform.translation.y = k.pos.y + bbox.height() * 0.5;
+            }
+        }
+
+        if let Ok(mut v) = visibility.get_mut(parent) {
+            v.is_visible = true;
         }
     }
 }
@@ -453,7 +499,7 @@ fn propagate_bboxes(
 fn print_mouse_events_system(
     windows: Res<Windows>,
     mut pointer: ResMut<Pointer>,
-    camera_query: Query<(&Camera, &GlobalTransform)>,
+    mut camera_query: Query<(&Camera, &mut GlobalTransform)>,
     mut mouse_button_input_events: EventReader<MouseButtonInput>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut cursor_moved_events: EventReader<CursorMoved>,
@@ -483,20 +529,32 @@ fn print_mouse_events_system(
         }
     }
 
-    for _event in mouse_wheel_events.iter() {
-        //println!("{:?}", event);
+    for event in mouse_wheel_events.iter() {
+        println!("{:?}", event);
+        match event {
+            MouseWheel { unit, y, .. } => {
+                if let Some((camera, mut cam_trans)) = camera_query.iter_mut().next() {
+                    cam_trans.scale.x += y * 0.1;
+                    cam_trans.scale.y += y * 0.1;
+                    cam_trans.scale.z += y * 0.1;
+                }
+            }
+        }
     }
 
     if !pointer.down {
         pointer.holding = None;
     }
-    if let Some((camera, cam_trans)) = camera_query.iter().next() {
+    if let Some((camera, cam_trans)) = camera_query.iter_mut().next() {
         if pointer.down && pointer.holding.is_none() {
             for (entity, bbox, trans) in holdable_entities.iter() {
-                if let Some(pos) = camera.world_to_screen(&windows, cam_trans, trans.translation) {
+                if let (Some(upper_right), Some(lower_left)) = (
+                    camera.world_to_screen(&windows, &cam_trans, bbox.upper_right.extend(0.)),
+                    camera.world_to_screen(&windows, &cam_trans, bbox.lower_left.extend(0.)),
+                ) {
                     let bbox_on_screen = BBox {
-                        upper_right: pos,
-                        lower_left: pos - bbox.size(),
+                        upper_right,
+                        lower_left,
                     };
                     if bbox_on_screen.contains(pointer.pos) {
                         pointer.holding = Some(entity);
@@ -518,10 +576,13 @@ fn focus_system(
         (camera_query.iter().next(), pointer.holding)
     {
         if let Ok((bbox, trans, mut kin)) = terms.get_mut(holding_entity) {
-            if let Some(pos) = camera.world_to_screen(&windows, cam_trans, trans.translation) {
+            if let (Some(upper_right), Some(lower_left)) = (
+                camera.world_to_screen(&windows, &cam_trans, bbox.upper_right.extend(0.)),
+                camera.world_to_screen(&windows, &cam_trans, bbox.lower_left.extend(0.)),
+            ) {
                 let bbox_on_screen = BBox {
-                    upper_right: pos,
-                    lower_left: pos - bbox.size(),
+                    upper_right,
+                    lower_left,
                 };
                 kin.pos += (pointer.pos - bbox_on_screen.center()) * 0.5;
                 kin.vel *= 0.0;
@@ -841,6 +902,8 @@ impl Pattern {
     }
 
     fn bind(&self, other: &Self) -> Result<Vec<(String, Pattern)>, ()> {
+
+    fn bind(&self, other: &Self) -> Result<Vec<(String, Self)>, ()> {
         match (self, other) {
             (Self::Sym(a), Self::Sym(b)) => {
                 if a == b {
@@ -912,41 +975,52 @@ fn listener_prompt(
     mut egui_context: ResMut<EguiContext>,
 ) {
     let ctx = &mut egui_context.ctx;
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.family_and_size.insert(
+        egui::TextStyle::Monospace,
+        (egui::FontFamily::Monospace, 24.0),
+    );
+    ctx.set_fonts(fonts);
     egui::Window::new("Listener").show(ctx, |ui| {
-        let listener_resp = ui.text_edit_multiline(&mut listener_state.command);
-        if ui.button("parse").clicked() && !listener_state.command.is_empty() {
-            spawn_pattern(
-                Kinematics::random().pos * 10.,
-                commands,
-                &materials,
-                &font,
-                Pattern::parse(&listener_state.command),
-            );
-            listener_state.command = Default::default();
-        }
-        if ui.button("clear").clicked() {
-            for (e, r, _) in rewrites.iter() {
-                if !r.is_primitive() {
+        ui.add(
+            egui::TextEdit::multiline(&mut listener_state.command)
+                .text_style(egui::TextStyle::Monospace),
+        );
+        ui.horizontal(|ui| {
+            if ui.button("parse").clicked() && !listener_state.command.is_empty() {
+                spawn_pattern(
+                    Kinematics::random().pos * 10.,
+                    commands,
+                    &materials,
+                    &font,
+                    Pattern::parse(&listener_state.command),
+                );
+                listener_state.command = Default::default();
+            }
+            if ui.button("clear").clicked() {
+                for (e, r, _) in rewrites.iter() {
+                    if !r.is_primitive() {
+                        commands.despawn_recursive(e);
+                    }
+                }
+
+                for (e, _, _) in free_patterns.iter() {
                     commands.despawn_recursive(e);
                 }
             }
-
-            for (e, _, _) in free_patterns.iter() {
-                commands.despawn_recursive(e);
+            if rewrite_timer.0.paused() {
+                if ui.button("unpause").clicked() {
+                    rewrite_timer.0.unpause()
+                }
+            } else {
+                if ui.button("pause").clicked() {
+                    rewrite_timer.0.pause()
+                }
             }
-        }
-        if rewrite_timer.0.paused() {
-            if ui.button("unpause").clicked() {
-                rewrite_timer.0.unpause()
+            if ui.button("step").clicked() {
+                step_ars(commands, holes, materials, font, rewrites, free_patterns);
             }
-        } else {
-            if ui.button("pause").clicked() {
-                rewrite_timer.0.pause()
-            }
-        }
-        if ui.button("step").clicked() {
-            step_ars(commands, holes, materials, font, rewrites, free_patterns);
-        }
+        });
     });
 }
 
@@ -993,9 +1067,12 @@ fn attract_matching_patterns_and_rewrites(
     mut rewrites: Query<(&Rewrite, &mut Kinematics)>,
     mut patterns: Query<(&Pattern, &mut Kinematics)>,
 ) {
-    let force = 100.;
+    let force = 150.;
     for (pattern, mut pattern_kin) in patterns.iter_mut() {
         for (rewrite, mut rewrite_kin) in rewrites.iter_mut() {
+            if rewrite.is_primitive() {
+                continue;
+            }
             let delta = rewrite_kin.pos - pattern_kin.pos;
             let dist = delta.length();
             if dist > 1e-6 {
@@ -1043,7 +1120,7 @@ fn step_ars(
                 continue;
             }
 
-            if !rewrite_bbox.overlaps(pattern_bbox) {
+            if !rewrite_bbox.overlaps(pattern_bbox) && !rewrite.is_primitive() {
                 continue;
             }
 
@@ -1070,7 +1147,7 @@ fn step_ars(
                         bindings_map.get("rewrite").cloned(),
                     ) {
                         let spawn_position =
-                            if let Ok((_, _, pat_bbox)) = rewrites.get(rewrite_entity) {
+                            if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
                                 pat_bbox.center()
                             } else {
                                 eprintln!("couldn't find rewrite entity: {:?}", rewrite_entity);
@@ -1101,8 +1178,20 @@ fn step_ars(
                                 eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
                                 Vec2::default()
                             };
-                        spawn_pattern(spawn_position, commands, &materials, &font, left);
-                        spawn_pattern(spawn_position, commands, &materials, &font, right);
+                        spawn_pattern(
+                            spawn_position + Vec2::new(-0.1, 0.0),
+                            commands,
+                            &materials,
+                            &font,
+                            left,
+                        );
+                        spawn_pattern(
+                            spawn_position + Vec2::new(0.1, 0.0),
+                            commands,
+                            &materials,
+                            &font,
+                            right,
+                        );
                     }
                 } else {
                     let spawn_position =
