@@ -24,10 +24,12 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(EguiPlugin)
         .add_startup_system(setup.system())
+        .add_event::<CompileEvent>()
         .add_startup_stage(
             "ars_setup",
             SystemStage::single(spawn_initial_state.system()),
         )
+        .add_system(compile_input.system())
         .add_system(listener_prompt.system())
         .add_system(keyboard_input_system.system())
         // .add_system(ars_ui.system())
@@ -663,6 +665,7 @@ struct ListenerState {
     history: Vec<Pattern>,
 }
 
+struct CompileEvent;
 struct ARSTimer(Timer);
 struct RewriteTimer(Timer);
 struct PersistenceTimer(Timer);
@@ -1350,6 +1353,7 @@ impl Pattern {
 
 fn listener_prompt(
     commands: &mut Commands,
+    mut compile_events: ResMut<Events<CompileEvent>>,
     mut rewrite_timer: ResMut<RewriteTimer>,
     image: ResMut<Image>,
     materials: Res<Materials>,
@@ -1367,7 +1371,7 @@ fn listener_prompt(
     );
     ctx.set_fonts(fonts);
 
-    egui::Window::new("Log Book").show(ctx, |ui| {
+    egui::Window::new("Log Book").scroll(true).show(ctx, |ui| {
         for prev_pat in listener_state.history.clone().iter().rev() {
             let pprinted_pat = prev_pat.pprint(&image);
             if ui.button(&pprinted_pat).clicked() {
@@ -1382,18 +1386,7 @@ fn listener_prompt(
         );
         ui.horizontal(|ui| {
             if ui.button("parse").clicked() && !listener_state.command.is_empty() {
-                let pattern = Pattern::parse(&listener_state.command);
-                listener_state.history.push(pattern.clone());
-                println!("Parsing, new history is {:?}", listener_state.history);
-                spawn_pattern(
-                    &image,
-                    Kinematics::random().pos * 10.,
-                    commands,
-                    &materials,
-                    &font,
-                    pattern,
-                );
-                listener_state.command = Default::default();
+                compile_events.send(CompileEvent);
             }
             if ui.button("format").clicked() {
                 listener_state.command = Pattern::parse(&listener_state.command).pprint(&image);
@@ -1440,29 +1433,20 @@ fn update_listener(
         };
     }
 }
-
-// fn listener_input(
-//     commands: &mut Commands,
-//     image: Res<Image>,
-//     font: Res<ARSFont>,
-//     mut listener_state: ResMut<ListenerState>,
-// ) {
-// }
-
-/// This system prints 'A' key state
-fn keyboard_input_system(
+fn compile_input(
     commands: &mut Commands,
+    mut compile_reader: EventReader<CompileEvent>,
     image: Res<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
     mut listener_state: ResMut<ListenerState>,
-    keyboard_input: Res<Input<KeyCode>>,
 ) {
-    if (keyboard_input.pressed(KeyCode::LControl) || keyboard_input.pressed(KeyCode::RControl))
-        && keyboard_input.pressed(KeyCode::Return)
-    {
+    if compile_reader.iter().next().is_some() {
         if !listener_state.command.trim().is_empty() {
             let pattern = Pattern::parse(&listener_state.command);
+            if let Some(p_idx) = listener_state.history.iter().position(|p| p == &pattern) {
+                listener_state.history.remove(p_idx);
+            }
             listener_state.history.push(pattern.clone());
             println!("Parsing, new history is {:?}", listener_state.history);
 
@@ -1479,12 +1463,24 @@ fn keyboard_input_system(
     }
 }
 
+/// This system prints 'A' key state
+fn keyboard_input_system(
+    mut compile_events: ResMut<Events<CompileEvent>>,
+    keyboard_input: Res<Input<KeyCode>>,
+) {
+    if (keyboard_input.pressed(KeyCode::LControl) || keyboard_input.pressed(KeyCode::RControl))
+        && keyboard_input.pressed(KeyCode::Return)
+    {
+        compile_events.send(CompileEvent);
+    }
+}
+
 fn attract_matching_patterns_and_rewrites(
     mut image: ResMut<Image>,
     mut rewrites: Query<(&Rewrite, &mut Kinematics)>,
     mut patterns: Query<(&Pattern, &mut Kinematics)>,
 ) {
-    let force = 1000.;
+    let force = 10000.;
     for (pattern, mut pattern_kin) in patterns.iter_mut() {
         for (rewrite, mut rewrite_kin) in rewrites.iter_mut() {
             if rewrite.is_primitive() {
@@ -1495,7 +1491,7 @@ fn attract_matching_patterns_and_rewrites(
             if dist > 1e-6 {
                 if rewrite.0.unify(&pattern, &mut image).is_ok() {
                     let force_vec =
-                        delta / dist.powf(2.0) * (force + (rewrite.0.complexity() as f32) * 10.0);
+                        delta / dist.powf(2.5) * (force + (rewrite.0.complexity() as f32) * 10.0);
                     pattern_kin.vel += force_vec;
                     rewrite_kin.vel -= force_vec;
                 } else if dist < 400. {
