@@ -8,6 +8,8 @@ edition = "2018"
 # { git = "https://github.com/bevyengine/bevy", rev = "7166a28bafa669eac40f5864cce8a150b330dd5f" }
 bevy_egui = { git = "https://github.com/jakobhellermann/bevy_egui", branch="bevy-0.5" }
 rand = "0.8.3"
+serde = {version = "1.0", features = ["derive"]}
+bincode = "1.3"
 
 [dependencies.bevy]
 git = "https://github.com/bevyengine/bevy"

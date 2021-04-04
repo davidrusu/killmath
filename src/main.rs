@@ -1,5 +1,6 @@
 #![feature(iter_intersperse)]
 #![feature(if_let_guard)]
+#![feature(map_first_last)]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
@@ -7,7 +8,7 @@ use std::io::{BufRead, BufReader, Write};
 
 use bevy::input::{
     keyboard::KeyCode,
-    mouse::{MouseButtonInput, MouseMotion, MouseWheel},
+    mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel},
     ElementState, Input,
 };
 use bevy::prelude::*;
@@ -15,6 +16,7 @@ use bevy::render::camera::Camera;
 use bevy::text::CalculatedSize;
 use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
+use serde::{Deserialize, Serialize};
 
 /// This example illustrates the various features of Bevy UI.
 fn main() {
@@ -59,12 +61,14 @@ fn fork_rewrite() -> Rewrite {
 }
 
 fn spawn_rewrite(
+    image: &Image,
     pos: Vec2,
     commands: &mut Commands,
-    materials: &Res<Materials>,
-    font: &Res<ARSFont>,
+    materials: &Materials,
+    font: &ARSFont,
     rewrite: Rewrite,
 ) {
+    println!("Spawning rewrite: {}", rewrite);
     // commands.spawn((ARS, rewrite));
     commands
         .spawn((
@@ -82,7 +86,7 @@ fn spawn_rewrite(
             parent
                 .spawn(Text2dBundle {
                     text: Text::with_section(
-                        rewrite.0.pprint(),
+                        rewrite.0.pprint(image),
                         TextStyle {
                             font: font.0.clone(),
                             font_size: 24.0,
@@ -134,7 +138,7 @@ fn spawn_rewrite(
             parent
                 .spawn(Text2dBundle {
                     text: Text::with_section(
-                        rewrite.1.pprint(),
+                        rewrite.1.pprint(image),
                         TextStyle {
                             font: font.0.clone(),
                             font_size: 24.0,
@@ -178,17 +182,19 @@ fn spawn_rewrite(
 }
 
 fn spawn_pattern(
+    image: &Image,
     pos: Vec2,
     commands: &mut Commands,
-    materials: &Res<Materials>,
-    font: &Res<ARSFont>,
+    materials: &Materials,
+    font: &ARSFont,
     pattern: Pattern,
 ) {
+    println!("Spawning pattern: {}", pattern);
     // commands.spawn((ARS, pattern));
     commands
         .spawn(Text2dBundle {
             text: Text::with_section(
-                pattern.pprint(),
+                pattern.pprint(image),
                 TextStyle {
                     font: font.0.clone(),
                     font_size: 24.0,
@@ -237,9 +243,9 @@ fn setup(
 ) {
     commands
         .spawn(OrthographicCameraBundle::new_2d())
-        .insert_resource(Holes(0))
+        .insert_resource(Image::default())
         .insert_resource(ARSTimer(Timer::from_seconds(0.01, true)))
-        .insert_resource(RewriteTimer(Timer::from_seconds(0.5, true)))
+        .insert_resource(RewriteTimer(Timer::from_seconds(0.1, true)))
         .insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
         .insert_resource(ListenerState::default())
         .insert_resource(Pointer::default())
@@ -253,33 +259,55 @@ fn setup(
         .insert_resource(ARSFont(asset_server.load("fonts/iosevka-medium.ttf")));
 }
 
-fn spawn_initial_state(commands: &mut Commands, materials: Res<Materials>, font: Res<ARSFont>) {
+fn spawn_initial_state(
+    commands: &mut Commands,
+    mut image: ResMut<Image>,
+    materials: Res<Materials>,
+    font: Res<ARSFont>,
+) {
     spawn_rewrite(
-        Kinematics::random().pos,
-        commands,
-        &materials,
-        &font,
-        rewrite_rewrite(),
-    );
-    spawn_rewrite(
+        &image,
         Kinematics::random().pos,
         commands,
         &materials,
         &font,
         fork_rewrite(),
     );
+    spawn_rewrite(
+        &image,
+        Kinematics::random().pos,
+        commands,
+        &materials,
+        &font,
+        rewrite_rewrite(),
+    );
 
-    if let Ok(reader) = File::open("listings.nimic").map(BufReader::new) {
-        for line in reader.lines() {
-            if let Ok(pat) = line {
-                spawn_pattern(
-                    Kinematics::random().pos * 10.0,
-                    commands,
-                    &materials,
-                    &font,
-                    Pattern::parse(&pat),
-                );
-            }
+    if let Ok(reader) = File::open("image.nimic").map(BufReader::new) {
+        let (pats, rewrites, loaded_image): (Vec<Pattern>, Vec<Rewrite>, Image) =
+            bincode::deserialize_from(reader).unwrap();
+
+        image.update(loaded_image);
+
+        for pat in pats {
+            spawn_pattern(
+                &image,
+                Kinematics::random().pos * 10.0,
+                commands,
+                &materials,
+                &font,
+                pat,
+            );
+        }
+
+        for rewrite in rewrites {
+            spawn_rewrite(
+                &image,
+                Kinematics::random().pos * 10.0,
+                commands,
+                &materials,
+                &font,
+                rewrite,
+            );
         }
     }
 }
@@ -326,7 +354,10 @@ fn ars_layout(
                 .unwrap();
 
             if let Ok(mut e_kin) = kinematics.get_mut(e_1) {
-                e_kin.vel += push_vec;
+                e_kin.vel += push_vec + Kinematics::random().vel * 0.1;
+            }
+            if let Ok(mut e_kin) = kinematics.get_mut(e_2) {
+                e_kin.vel -= push_vec + Kinematics::random().vel * 0.1;
             }
         }
     }
@@ -381,7 +412,6 @@ fn rewrite_layout(
     for children in terms.iter() {
         let mut top_height = None;
         let mut top_width = None;
-        let mut bottom_height = None;
         let mut bottom_width = None;
         for child in children.iter() {
             if let Ok((_, calc_size)) = top_patterns.get_mut(*child) {
@@ -389,7 +419,6 @@ fn rewrite_layout(
                 top_width = Some(calc_size.size.width);
             }
             if let Ok((_, calc_size)) = bottom_patterns.get_mut(*child) {
-                bottom_height = Some(calc_size.size.height);
                 bottom_width = Some(calc_size.size.width);
             }
         }
@@ -425,7 +454,7 @@ fn propagate_bboxes(
     mut global_transforms: Query<&mut GlobalTransform, With<BBox>>,
     roots: Query<Entity, Without<Parent>>,
     mut visibility: Query<&mut Visible>,
-    mut kin: Query<(&Kinematics)>,
+    kin: Query<&Kinematics>,
 ) {
     for (e, sprite) in sprites.iter() {
         if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
@@ -504,7 +533,7 @@ fn print_mouse_events_system(
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut cursor_moved_events: EventReader<CursorMoved>,
     mut mouse_wheel_events: EventReader<MouseWheel>,
-    holdable_entities: Query<(Entity, &BBox, &GlobalTransform), With<ARS>>,
+    holdable_entities: Query<(Entity, &BBox), With<ARS>>,
 ) {
     for event in mouse_button_input_events.iter() {
         match event {
@@ -524,16 +553,22 @@ fn print_mouse_events_system(
     }
 
     for event in cursor_moved_events.iter() {
-        if let Some(window) = windows.get(event.id) {
-            pointer.pos = event.position;
-        }
+        pointer.pos = event.position;
     }
 
     for event in mouse_wheel_events.iter() {
         println!("{:?}", event);
         match event {
-            MouseWheel { unit, y, .. } => {
-                if let Some((camera, mut cam_trans)) = camera_query.iter_mut().next() {
+            MouseWheel {
+                unit: MouseScrollUnit::Pixel,
+                ..
+            } => (),
+            MouseWheel {
+                unit: MouseScrollUnit::Line,
+                y,
+                ..
+            } => {
+                if let Some((_, mut cam_trans)) = camera_query.iter_mut().next() {
                     cam_trans.scale.x += y * 0.1;
                     cam_trans.scale.y += y * 0.1;
                     cam_trans.scale.z += y * 0.1;
@@ -547,7 +582,7 @@ fn print_mouse_events_system(
     }
     if let Some((camera, cam_trans)) = camera_query.iter_mut().next() {
         if pointer.down && pointer.holding.is_none() {
-            for (entity, bbox, trans) in holdable_entities.iter() {
+            for (entity, bbox) in holdable_entities.iter() {
                 if let (Some(upper_right), Some(lower_left)) = (
                     camera.world_to_screen(&windows, &cam_trans, bbox.upper_right.extend(0.)),
                     camera.world_to_screen(&windows, &cam_trans, bbox.lower_left.extend(0.)),
@@ -569,13 +604,13 @@ fn print_mouse_events_system(
 fn focus_system(
     windows: Res<Windows>,
     pointer: Res<Pointer>,
-    mut terms: Query<(&BBox, &GlobalTransform, &mut Kinematics), With<ARS>>,
+    mut terms: Query<(&BBox, &mut Kinematics), With<ARS>>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
 ) {
     if let (Some((camera, cam_trans)), Some(holding_entity)) =
         (camera_query.iter().next(), pointer.holding)
     {
-        if let Ok((bbox, trans, mut kin)) = terms.get_mut(holding_entity) {
+        if let Ok((bbox, mut kin)) = terms.get_mut(holding_entity) {
             if let (Some(upper_right), Some(lower_left)) = (
                 camera.world_to_screen(&windows, &cam_trans, bbox.upper_right.extend(0.)),
                 camera.world_to_screen(&windows, &cam_trans, bbox.lower_left.extend(0.)),
@@ -594,6 +629,7 @@ fn focus_system(
 fn persistence(
     time: Res<Time>,
     mut timer: ResMut<PersistenceTimer>,
+    image: Res<Image>,
     rewrites: Query<&Rewrite, With<ARS>>,
     free_patterns: Query<&Pattern, With<ARS>>,
 ) {
@@ -601,35 +637,32 @@ fn persistence(
         return;
     }
 
-    let listings_file = "listings.nimic";
-    let listings_file_tmp = "listings.nimic.tmp";
+    let image_file = "image.nimic";
+    let image_file_tmp = "image.nimic.tmp";
     {
-        let mut tmp = File::create(listings_file_tmp).unwrap();
+        let mut tmp = File::create(image_file_tmp).unwrap();
 
-        for pattern in free_patterns.iter() {
-            tmp.write_all(format!("{}\n", pattern).as_bytes()).unwrap();
-        }
+        // TODO: we may not need cloned here if Serialize is implemented for &T
+        let pats: Vec<Pattern> = free_patterns.iter().cloned().collect();
+        let rewrites: Vec<Rewrite> = rewrites
+            .iter()
+            .cloned()
+            .filter(|r| !r.is_primitive())
+            .collect();
 
-        for rewrite in rewrites.iter() {
-            if rewrite.is_primitive() {
-                continue;
-            }
-
-            tmp.write_all(format!("{}\n", rewrite).as_bytes()).unwrap();
-        }
+        bincode::serialize_into(tmp, &(pats, rewrites, image.clone()));
     }
 
-    std::fs::rename(listings_file_tmp, listings_file).unwrap();
-    println!("Saved listings");
+    std::fs::rename(image_file_tmp, image_file).unwrap();
+    println!("Saved image");
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct ListenerState {
     command: String,
+    history: Vec<Pattern>,
 }
 
-#[derive(Default)]
-struct Holes(u64);
 struct ARSTimer(Timer);
 struct RewriteTimer(Timer);
 struct PersistenceTimer(Timer);
@@ -733,12 +766,50 @@ impl Kinematics {
                 thread_rng.gen_range(-1.0..1.0),
                 thread_rng.gen_range(-1.0..1.0),
             ) * 4.,
-            vel: Vec2::default(),
+            vel: Vec2::new(
+                thread_rng.gen_range(-1.0..1.0),
+                thread_rng.gen_range(-1.0..1.0),
+            ) * 0.1,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+struct Image {
+    next_hole: u64,
+    next_reference: u64,
+    references: BTreeMap<u64, Pattern>,
+}
+
+impl Image {
+    fn update(&mut self, other: Self) {
+        self.next_hole = other.next_hole.max(self.next_hole);
+        self.next_reference = other.next_reference.max(self.next_reference);
+        self.references.extend(other.references);
+    }
+
+    fn alloc_hole(&mut self) -> String {
+        let hole = self.next_hole;
+        self.next_hole += 1;
+        format!("{}", hole)
+    }
+
+    fn alloc_ref(&mut self) -> u64 {
+        let reference = self.next_reference;
+        self.next_reference += 1;
+        reference
+    }
+
+    fn store_ref(&mut self, reference: u64, pat: Pattern) {
+        self.references.insert(reference, pat);
+    }
+
+    fn deref(&self, reference: u64) -> Option<&Pattern> {
+        self.references.get(&reference)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Rewrite(Pattern, Pattern);
 
 impl Rewrite {
@@ -746,8 +817,8 @@ impl Rewrite {
         self == &rewrite_rewrite() || self == &fork_rewrite()
     }
 
-    fn pprint(&self) -> String {
-        format!("[{} -> {}]", self.0.pprint(), self.1.pprint())
+    fn pprint(&self, image: &Image) -> String {
+        format!("[{} -> {}]", self.0.pprint(image), self.1.pprint(image))
     }
 }
 
@@ -757,11 +828,12 @@ impl std::fmt::Display for Rewrite {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 enum Pattern {
     Sym(String),       // ==> concrete value
     Hole(String),      // ==> ?var
     Seq(Vec<Pattern>), // ==> [ x y ?v ]
+    Ref(u64),          // ==> ~(1132)  -- reference to another pattern
 }
 
 impl Default for Pattern {
@@ -782,6 +854,7 @@ impl std::fmt::Display for Pattern {
                 }
                 write!(f, "]")
             }
+            Self::Ref(r) => write!(f, "...",),
         }
     }
 }
@@ -828,6 +901,18 @@ impl Tok {
     }
 }
 
+impl From<Vec<Pattern>> for Pattern {
+    fn from(seq: Vec<Pattern>) -> Self {
+        Self::Seq(seq)
+    }
+}
+
+impl From<&str> for Pattern {
+    fn from(s: &str) -> Self {
+        Self::parse(s)
+    }
+}
+
 impl Pattern {
     fn parse_seq(tokens: &mut VecDeque<Tok>) -> Vec<Pattern> {
         let mut seq: Vec<Pattern> = Default::default();
@@ -865,11 +950,17 @@ impl Pattern {
         }
     }
 
-    fn pprint(&self) -> String {
-        self.pprint_indented(0, false)
+    fn pprint(&self, image: &Image) -> String {
+        self.pprint_indented(image, 0, false, &mut Default::default())
     }
 
-    fn pprint_indented(&self, indent_level: usize, parent_wrapped: bool) -> String {
+    fn pprint_indented(
+        &self,
+        image: &Image,
+        indent_level: usize,
+        parent_wrapped: bool,
+        expanded_refs: &mut BTreeMap<u64, usize>,
+    ) -> String {
         let indent: String = std::iter::repeat(" ".to_string())
             .take(indent_level)
             .collect();
@@ -892,16 +983,220 @@ impl Pattern {
                     pprint = format!(
                         "{}{}",
                         pprint,
-                        pat.pprint_indented(indent_level + (if wrapped { 1 } else { 0 }), wrapped)
+                        pat.pprint_indented(
+                            image,
+                            indent_level + (if wrapped { 1 } else { 0 }),
+                            wrapped,
+                            &mut expanded_refs.clone()
+                        )
                     );
                 }
                 pprint = format!("{}]", pprint);
                 pprint
             }
+            Self::Ref(r) => {
+                let times_expanded = expanded_refs.entry(*r).or_default();
+                *times_expanded += 1;
+                if *times_expanded > 2 {
+                    "...".to_string()
+                } else {
+                    image.deref(*r).unwrap().pprint_indented(
+                        image,
+                        indent_level,
+                        parent_wrapped,
+                        expanded_refs,
+                    )
+                }
+            }
         }
     }
 
-    fn bind(&self, other: &Self) -> Result<Vec<(String, Pattern)>, ()> {
+    fn unify(&self, other: &Self, image: &mut Image) -> Result<BTreeMap<String, Self>, ()> {
+        let mut bindings =
+            self.unify_rec(other, Default::default(), image, &mut Default::default())?;
+        let mut roots = self.holes(image);
+        roots.extend(other.holes(image));
+
+        let mut cycles = self.cycles(&bindings);
+
+        let cycle_breaks: BTreeMap<_, _> = cycles
+            .into_iter()
+            .map(|cyclic_hole| (cyclic_hole, image.alloc_ref()))
+            .collect();
+
+        for (cyclic_hole, r) in cycle_breaks.iter() {
+            let ref_pat = Pattern::Ref(*r);
+            for (_, mut pat) in bindings.iter_mut() {
+                pat.replace_hole(&cyclic_hole, ref_pat.clone());
+            }
+        }
+        for (cyclic_hole, r) in cycle_breaks {
+            let cyclic_pat = bindings.remove(&cyclic_hole).unwrap();
+            bindings.insert(cyclic_hole, Pattern::Ref(r));
+            image.store_ref(r, cyclic_pat);
+        }
+
+        self.inline_bindings(&roots, &mut bindings, image);
+
+        Ok(bindings)
+    }
+
+    fn unify_rec(
+        &self,
+        other: &Self,
+        mut bindings: BTreeMap<String, Self>,
+        image: &mut Image,
+        ref_memo: &mut BTreeSet<(Self, Self)>,
+    ) -> Result<BTreeMap<String, Self>, ()> {
+        let unified = match (self, other) {
+            (Self::Sym(a), Self::Sym(b)) => {
+                if a == b {
+                    Ok(bindings)
+                } else {
+                    Err(())
+                }
+            }
+            (Self::Seq(seq_a), Self::Seq(seq_b)) => {
+                if seq_a.len() != seq_b.len() {
+                    Err(())
+                } else {
+                    for (a, b) in seq_a.iter().zip(seq_b.iter()) {
+                        bindings = a.unify_rec(&b, bindings, image, ref_memo)?;
+                    }
+                    Ok(bindings)
+                }
+            }
+            (Self::Hole(a), Self::Hole(b)) => {
+                if a == b {
+                    Ok(bindings)
+                } else {
+                    match (bindings.remove(a), bindings.remove(b)) {
+                        (None, None) => {
+                            let a_b_hole = image.alloc_hole();
+                            bindings.insert(a.to_string(), Pattern::Hole(a_b_hole.clone()));
+                            bindings.insert(b.to_string(), Pattern::Hole(a_b_hole.clone()));
+                            Ok(bindings)
+                        }
+                        (Some(pat), None) | (None, Some(pat)) => {
+                            let a_b_hole = image.alloc_hole();
+                            bindings.insert(a.to_string(), Pattern::Hole(a_b_hole.clone()));
+                            bindings.insert(b.to_string(), Pattern::Hole(a_b_hole.clone()));
+                            bindings.insert(a_b_hole, pat);
+                            Ok(bindings)
+                        }
+                        (Some(a_pat), Some(b_pat)) => {
+                            bindings.insert(a.to_string(), a_pat.clone());
+                            bindings.insert(b.to_string(), b_pat.clone());
+                            a_pat.unify_rec(&b_pat, bindings, image, ref_memo)
+                        }
+                    }
+                }
+            }
+            (Self::Hole(h), pat) | (pat, Self::Hole(h)) => match bindings.get(h) {
+                Some(prev_match) => prev_match.clone().unify_rec(pat, bindings, image, ref_memo),
+                None => {
+                    bindings.insert(h.clone(), pat.clone());
+                    Ok(bindings)
+                }
+            },
+            (Self::Ref(r), pat) | (pat, Self::Ref(r)) => {
+                if ref_memo.contains(&(
+                    Self::Ref(*r).min(pat.clone()),
+                    Self::Ref(*r).max(pat.clone()),
+                )) {
+                    Ok(bindings)
+                } else {
+                    ref_memo.insert((
+                        Self::Ref(*r).min(pat.clone()),
+                        Self::Ref(*r).max(pat.clone()),
+                    ));
+                    let r_pat = image.deref(*r).unwrap().clone();
+                    pat.unify_rec(&r_pat, bindings, image, ref_memo)
+                }
+            }
+            _ => Err(()),
+        };
+        unified
+    }
+
+    fn inline_bindings(
+        &self,
+        roots: &BTreeSet<String>,
+        bindings: &mut BTreeMap<String, Self>,
+        image: &mut Image,
+    ) {
+        loop {
+            let mut changed = false;
+
+            for (hole, pat) in bindings.clone().into_iter() {
+                let common_holes = pat
+                    .holes_no_deref()
+                    .intersection(&bindings.keys().cloned().collect())
+                    .cloned()
+                    .collect::<Vec<_>>();
+                // println!("Inlining {:?} {} -- {:?}", hole, pat, common_holes);
+
+                if common_holes.is_empty() {
+                    // this pattern has no holes which are bindings.
+
+                    match pat {
+                        Pattern::Hole(pat_hole) if !roots.contains(&pat_hole) => {
+                            for (other_hole, other_pat) in bindings.iter_mut() {
+                                // println!("  into {:?} {}", other_hole, other_pat);
+                                changed = changed
+                                    | other_pat.replace_hole(&pat_hole, Pattern::Hole(hole.clone()))
+                            }
+                        }
+                        pat => {
+                            for (other_hole, other_pat) in bindings.iter_mut() {
+                                // println!("  into {:?} {}", other_hole, other_pat);
+                                changed = changed | other_pat.replace_hole(&hole, pat.clone())
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (_, pat) in bindings.iter_mut() {
+                changed = changed | pat.inline_indirect_refs(image)
+            }
+
+            for (r, mut pat) in image.references.clone().into_iter() {
+                if pat.inline_indirect_refs(image) {
+                    changed = true;
+                    image.store_ref(r, pat);
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        let non_root_bindings = &bindings.keys().cloned().collect::<BTreeSet<_>>() - &roots;
+        for non_root_binding in non_root_bindings {
+            if bindings
+                .iter()
+                .all(|(_, p)| !p.holes(image).contains(&non_root_binding))
+            {
+                bindings.remove(&non_root_binding);
+            }
+        }
+    }
+
+    fn inline_indirect_refs(&mut self, image: &Image) -> bool {
+        match self {
+            Self::Ref(r) => match image.deref(*r) {
+                Some(Self::Ref(s)) => {
+                    *r = *s;
+                    true
+                }
+                _ => false,
+            },
+            Self::Seq(seq) => seq.iter_mut().any(|p| p.inline_indirect_refs(image)),
+            _ => false,
+        }
+    }
 
     fn bind(&self, other: &Self) -> Result<Vec<(String, Self)>, ()> {
         match (self, other) {
@@ -939,11 +1234,99 @@ impl Pattern {
         }
     }
 
-    fn holes(&self) -> BTreeSet<String> {
+    /// Returns all holes who directly or indirectly refer to themselves
+    fn cycles(&self, bindings: &BTreeMap<String, Self>) -> BTreeSet<String> {
+        let mut reachable: BTreeMap<String, BTreeSet<String>> = Default::default();
+        for (hole, pattern) in bindings.iter() {
+            let pattern_holes = pattern.holes_no_deref();
+            reachable
+                .entry(hole.clone())
+                .or_default()
+                .extend(pattern_holes);
+        }
+        let mut reachable_set_changed = true;
+        while reachable_set_changed {
+            reachable_set_changed = false;
+            let mut to_expand = Vec::new();
+            for (parent_hole, child_holes) in reachable.iter() {
+                for child in child_holes.iter() {
+                    if let Some(child_child_holes) = reachable.get(child) {
+                        if !(child_child_holes - child_holes).is_empty() {
+                            to_expand.push((parent_hole.to_string(), child.to_string()))
+                        }
+                    }
+                }
+            }
+            reachable_set_changed = !to_expand.is_empty();
+            for (par, child) in to_expand {
+                if let Some(holes) = reachable.get(&child).cloned() {
+                    reachable.entry(par).or_default().extend(holes)
+                }
+            }
+        }
+
+        reachable
+            .into_iter()
+            .filter(|(h, refs)| refs.contains(h))
+            .map(|(h, _)| h)
+            .collect()
+    }
+
+    fn holes_no_deref(&self) -> BTreeSet<String> {
+        let mut holes = Default::default();
+        self.holes_rec_no_deref(&mut holes);
+        holes
+    }
+
+    fn holes_rec_no_deref(&self, holes: &mut BTreeSet<String>) {
         match self {
-            Self::Hole(hole) => vec![hole.clone()].into_iter().collect(),
-            Self::Seq(seq) => seq.iter().flat_map(|p| p.holes()).collect(),
-            _ => Default::default(),
+            Self::Hole(hole) => {
+                holes.insert(hole.clone());
+            }
+            Self::Seq(seq) => seq.iter().for_each(|p| p.holes_rec_no_deref(holes)),
+            _ => (),
+        }
+    }
+
+    fn holes(&self, image: &Image) -> BTreeSet<String> {
+        let mut holes = Default::default();
+        self.holes_rec(&mut holes, image, &mut Default::default());
+        holes
+    }
+
+    fn holes_rec(&self, holes: &mut BTreeSet<String>, image: &Image, memo: &mut BTreeSet<u64>) {
+        match self {
+            Self::Hole(hole) => {
+                holes.insert(hole.clone());
+            }
+            Self::Seq(seq) => seq.iter().for_each(|p| p.holes_rec(holes, image, memo)),
+            Self::Ref(r) if !memo.contains(r) => {
+                memo.insert(*r);
+                image.deref(*r).unwrap().holes_rec(holes, image, memo);
+            }
+            _ => (),
+        }
+    }
+
+    fn replace_holes(&mut self, holes: BTreeMap<String, Self>) -> bool {
+        let mut changed = false;
+        for (hole, pat) in holes {
+            changed = changed | self.replace_hole(&hole, pat);
+        }
+        changed
+    }
+
+    fn replace_hole(&mut self, hole: &str, pat: Self) -> bool {
+        match self {
+            Self::Hole(h) if h == hole => {
+                *self = pat;
+                true
+            }
+            Self::Seq(seq) => seq
+                .iter_mut()
+                .map(|p| p.replace_hole(hole, pat.clone()))
+                .fold(false, |changed, replace_res| changed | replace_res),
+            pat => false,
         }
     }
 
@@ -957,8 +1340,10 @@ impl Pattern {
 
     fn complexity(&self) -> usize {
         match self {
-            Self::Sym(s) | Self::Hole(s) => ((s.len() as f64).log2() as usize) + 1,
+            Self::Sym(s) => 1,
+            Self::Hole(h) => 2,
             Self::Seq(seq) => seq.iter().map(Self::complexity).sum::<usize>() + 1,
+            Self::Ref(_) => 9,
         }
     }
 }
@@ -966,7 +1351,7 @@ impl Pattern {
 fn listener_prompt(
     commands: &mut Commands,
     mut rewrite_timer: ResMut<RewriteTimer>,
-    holes: ResMut<Holes>,
+    image: ResMut<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
@@ -981,6 +1366,15 @@ fn listener_prompt(
         (egui::FontFamily::Monospace, 24.0),
     );
     ctx.set_fonts(fonts);
+
+    egui::Window::new("Log Book").show(ctx, |ui| {
+        for prev_pat in listener_state.history.clone().iter().rev() {
+            let pprinted_pat = prev_pat.pprint(&image);
+            if ui.button(&pprinted_pat).clicked() {
+                listener_state.command = pprinted_pat;
+            }
+        }
+    });
     egui::Window::new("Listener").show(ctx, |ui| {
         ui.add(
             egui::TextEdit::multiline(&mut listener_state.command)
@@ -988,14 +1382,21 @@ fn listener_prompt(
         );
         ui.horizontal(|ui| {
             if ui.button("parse").clicked() && !listener_state.command.is_empty() {
+                let pattern = Pattern::parse(&listener_state.command);
+                listener_state.history.push(pattern.clone());
+                println!("Parsing, new history is {:?}", listener_state.history);
                 spawn_pattern(
+                    &image,
                     Kinematics::random().pos * 10.,
                     commands,
                     &materials,
                     &font,
-                    Pattern::parse(&listener_state.command),
+                    pattern,
                 );
                 listener_state.command = Default::default();
+            }
+            if ui.button("format").clicked() {
+                listener_state.command = Pattern::parse(&listener_state.command).pprint(&image);
             }
             if ui.button("clear").clicked() {
                 for (e, r, _) in rewrites.iter() {
@@ -1018,7 +1419,7 @@ fn listener_prompt(
                 }
             }
             if ui.button("step").clicked() {
-                step_ars(commands, holes, materials, font, rewrites, free_patterns);
+                step_ars(commands, image, materials, font, rewrites, free_patterns);
             }
         });
     });
@@ -1026,22 +1427,32 @@ fn listener_prompt(
 
 fn update_listener(
     mut listener_state: ResMut<ListenerState>,
+    image: Res<Image>,
     pointer: Res<Pointer>,
     rewrites: Query<&Rewrite>,
     patterns: Query<&Pattern>,
 ) {
     if let Some(holding_entity) = pointer.holding {
         if let Ok(rewrite) = rewrites.get(holding_entity) {
-            listener_state.command = rewrite.pprint()
+            listener_state.command = rewrite.pprint(&image)
         } else if let Ok(pat) = patterns.get(holding_entity) {
-            listener_state.command = pat.pprint()
+            listener_state.command = pat.pprint(&image)
         };
     }
 }
 
+// fn listener_input(
+//     commands: &mut Commands,
+//     image: Res<Image>,
+//     font: Res<ARSFont>,
+//     mut listener_state: ResMut<ListenerState>,
+// ) {
+// }
+
 /// This system prints 'A' key state
 fn keyboard_input_system(
     commands: &mut Commands,
+    image: Res<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
     mut listener_state: ResMut<ListenerState>,
@@ -1051,12 +1462,17 @@ fn keyboard_input_system(
         && keyboard_input.pressed(KeyCode::Return)
     {
         if !listener_state.command.trim().is_empty() {
+            let pattern = Pattern::parse(&listener_state.command);
+            listener_state.history.push(pattern.clone());
+            println!("Parsing, new history is {:?}", listener_state.history);
+
             spawn_pattern(
+                &image,
                 Kinematics::random().pos * 10.0,
                 commands,
                 &materials,
                 &font,
-                Pattern::parse(&listener_state.command),
+                pattern,
             );
             listener_state.command = Default::default();
         }
@@ -1064,10 +1480,11 @@ fn keyboard_input_system(
 }
 
 fn attract_matching_patterns_and_rewrites(
+    mut image: ResMut<Image>,
     mut rewrites: Query<(&Rewrite, &mut Kinematics)>,
     mut patterns: Query<(&Pattern, &mut Kinematics)>,
 ) {
-    let force = 150.;
+    let force = 1000.;
     for (pattern, mut pattern_kin) in patterns.iter_mut() {
         for (rewrite, mut rewrite_kin) in rewrites.iter_mut() {
             if rewrite.is_primitive() {
@@ -1076,9 +1493,9 @@ fn attract_matching_patterns_and_rewrites(
             let delta = rewrite_kin.pos - pattern_kin.pos;
             let dist = delta.length();
             if dist > 1e-6 {
-                if rewrite.0.bind(&pattern).is_ok() {
+                if rewrite.0.unify(&pattern, &mut image).is_ok() {
                     let force_vec =
-                        delta / dist.powf(1.5) * (force + (rewrite.0.complexity() as f32) * 10.0);
+                        delta / dist.powf(2.0) * (force + (rewrite.0.complexity() as f32) * 10.0);
                     pattern_kin.vel += force_vec;
                     rewrite_kin.vel -= force_vec;
                 } else if dist < 400. {
@@ -1093,7 +1510,7 @@ fn attract_matching_patterns_and_rewrites(
 
 fn step_ars(
     commands: &mut Commands,
-    mut holes: ResMut<Holes>,
+    mut image: ResMut<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
@@ -1102,18 +1519,15 @@ fn step_ars(
     let mut spent_rewrites: BTreeSet<Entity> = Default::default();
 
     for (pattern_entity, pattern, pattern_bbox) in free_patterns.iter() {
-        let mut candidate_rewrites: Vec<(Rewrite, Entity)> = Default::default();
+        let mut candidate_rewrites: Vec<(Rewrite, BTreeMap<String, Pattern>, Entity)> =
+            Default::default();
 
         let pattern_holes: BTreeMap<_, _> = pattern
-            .holes()
+            .holes(&image)
             .into_iter()
-            .map(|h| {
-                holes.0 += 1;
-                (h, format!("{}", holes.0))
-            })
+            .map(|h| (h, format!("{}", image.alloc_hole())))
             .collect();
-
-        let pattern = pattern.clone().rename_holes(pattern_holes);
+        let pattern_renamed = pattern.clone().rename_holes(pattern_holes.clone());
 
         for (rewrite_entity, rewrite, rewrite_bbox) in rewrites.iter() {
             if spent_rewrites.contains(&rewrite_entity) {
@@ -1124,76 +1538,63 @@ fn step_ars(
                 continue;
             }
 
-            if let Ok(_bindings) = rewrite.0.bind(&pattern) {
-                candidate_rewrites.push((rewrite.clone(), rewrite_entity));
+            if let Ok(bindings) = rewrite.0.unify(&pattern_renamed, &mut image) {
+                let inverted_pattern_holes = pattern_holes
+                    .clone()
+                    .into_iter()
+                    .map(|(a, b)| (b, a))
+                    .collect::<BTreeMap<_, _>>();
+                let bindings = bindings
+                    .into_iter()
+                    .map(|(b, pat)| {
+                        let old_hole = inverted_pattern_holes.get(&b).cloned().unwrap_or(b);
+                        let old_pat = pat.rename_holes(inverted_pattern_holes.clone());
+                        (old_hole, old_pat)
+                    })
+                    .collect();
+                candidate_rewrites.push((rewrite.clone(), bindings, rewrite_entity));
             }
         }
-        candidate_rewrites
-            .sort_by(|(r_a, _), (r_b, _)| r_a.0.complexity().cmp(&r_b.0.complexity()));
-        if let Some((rewrite, rewrite_entity)) = candidate_rewrites.pop() {
-            if let Ok(bindings) = rewrite.0.bind(&pattern) {
-                println!("Bindings {:?}", bindings);
-                commands.despawn_recursive(pattern_entity);
+        candidate_rewrites.sort_by(|(r_a, r_a_bindings, _), (r_b, r_b_bindings, _)| {
+            r_a.0.complexity().cmp(&r_b.0.complexity())
+        });
+        if let Some((rewrite, bindings, rewrite_entity)) = candidate_rewrites.pop() {
+            println!("Pattern: {}", pattern);
+            println!("Candidates: {:?}", candidate_rewrites);
+            println!("Bindings {:?}", bindings);
+            commands.despawn_recursive(pattern_entity);
+            if !rewrite.is_primitive() {
                 spent_rewrites.insert(rewrite_entity);
+            }
 
-                if rewrite == rewrite_rewrite() {
-                    let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
-                    if bindings_map.len() != bindings.len() {
-                        panic!("Unification is not supported yet");
-                    }
+            if rewrite == rewrite_rewrite() {
+                println!("Bindings {:?}", bindings);
 
-                    if let (Some(pattern), Some(rewrite)) = (
-                        bindings_map.get("pattern").cloned(),
-                        bindings_map.get("rewrite").cloned(),
-                    ) {
-                        let spawn_position =
-                            if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
-                                pat_bbox.center()
-                            } else {
-                                eprintln!("couldn't find rewrite entity: {:?}", rewrite_entity);
-                                Vec2::default()
-                            };
-                        spawn_rewrite(
-                            spawn_position,
-                            commands,
-                            &materials,
-                            &font,
-                            Rewrite(pattern, rewrite),
-                        );
-                    }
-                } else if rewrite == fork_rewrite() {
-                    let bindings_map: BTreeMap<_, _> = bindings.iter().cloned().collect();
-                    if bindings_map.len() != bindings.len() {
-                        panic!("Unification is not supported yet");
-                    }
-
-                    if let (Some(left), Some(right)) = (
-                        bindings_map.get("left").cloned(),
-                        bindings_map.get("right").cloned(),
-                    ) {
-                        let spawn_position =
-                            if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
-                                pat_bbox.center()
-                            } else {
-                                eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
-                                Vec2::default()
-                            };
-                        spawn_pattern(
-                            spawn_position + Vec2::new(-0.1, 0.0),
-                            commands,
-                            &materials,
-                            &font,
-                            left,
-                        );
-                        spawn_pattern(
-                            spawn_position + Vec2::new(0.1, 0.0),
-                            commands,
-                            &materials,
-                            &font,
-                            right,
-                        );
-                    }
-                } else {
+                if let (Some(pattern), Some(rewrite)) = (
+                    bindings.get("pattern").cloned(),
+                    bindings.get("rewrite").cloned(),
+                ) {
+                    let spawn_position =
+                        if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
+                            pat_bbox.center()
+                        } else {
+                            eprintln!("couldn't find rewrite entity: {:?}", rewrite_entity);
+                            Vec2::default()
+                        };
+                    spawn_rewrite(
+                        &image,
+                        spawn_position,
+                        commands,
+                        &materials,
+                        &font,
+                        Rewrite(pattern, rewrite),
+                    );
+                }
+            } else if rewrite == fork_rewrite() {
+                if let (Some(left), Some(right)) = (
+                    bindings.get("left").cloned(),
+                    bindings.get("right").cloned(),
+                ) {
                     let spawn_position =
                         if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
                             pat_bbox.center()
@@ -1201,16 +1602,42 @@ fn step_ars(
                             eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
                             Vec2::default()
                         };
-                    let rewritten_pattern = rewrite.1.apply(bindings);
-                    commands.despawn_recursive(rewrite_entity);
                     spawn_pattern(
-                        spawn_position,
+                        &image,
+                        spawn_position + Vec2::new(-0.1, 0.0),
                         commands,
                         &materials,
                         &font,
-                        rewritten_pattern,
+                        left,
+                    );
+                    spawn_pattern(
+                        &image,
+                        spawn_position + Vec2::new(0.1, 0.0),
+                        commands,
+                        &materials,
+                        &font,
+                        right,
                     );
                 }
+            } else {
+                let spawn_position = if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity)
+                {
+                    pat_bbox.center()
+                } else {
+                    eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
+                    Vec2::default()
+                };
+                let mut rewritten_pattern = rewrite.1.clone();
+                rewritten_pattern.replace_holes(bindings);
+                commands.despawn_recursive(rewrite_entity);
+                spawn_pattern(
+                    &image,
+                    spawn_position,
+                    commands,
+                    &materials,
+                    &font,
+                    rewritten_pattern,
+                );
             }
         }
     }
@@ -1219,7 +1646,7 @@ fn step_ars(
 fn ars(
     time: Res<Time>,
     mut timer: ResMut<RewriteTimer>,
-    holes: ResMut<Holes>,
+    image: ResMut<Image>,
     commands: &mut Commands,
     materials: Res<Materials>,
     font: Res<ARSFont>,
@@ -1230,7 +1657,7 @@ fn ars(
         return;
     }
 
-    step_ars(commands, holes, materials, font, rewrites, free_patterns);
+    step_ars(commands, image, materials, font, rewrites, free_patterns);
 }
 
 fn ars_ui(
@@ -1258,5 +1685,228 @@ fn ars_ui(
                     ui.monospace(format!("{}", rewrite.1));
                 });
             });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unify_simple() {
+        assert_eq!(
+            Pattern::parse("a").unify(&Pattern::parse("b"), &mut Default::default()),
+            Err(())
+        );
+        assert_eq!(
+            Pattern::parse("a").unify(&Pattern::parse("a"), &mut Default::default()),
+            Ok(Default::default())
+        );
+
+        assert_eq!(
+            Pattern::parse("[a b]").unify(&Pattern::parse("[a b]"), &mut Default::default()),
+            Ok(Default::default())
+        );
+
+        assert_eq!(
+            Pattern::parse("[a [x y]]")
+                .unify(&Pattern::parse("[a [x y]]"), &mut Default::default()),
+            Ok(Default::default())
+        );
+
+        assert_eq!(
+            Pattern::parse("[a [x z]]")
+                .unify(&Pattern::parse("[a [x y]]"), &mut Default::default()),
+            Err(())
+        );
+
+        assert_eq!(
+            Pattern::parse("?x").unify(&Pattern::parse("1"), &mut Default::default()),
+            Ok(vec![("x".into(), "1".into())].into_iter().collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("1").unify(&Pattern::parse("?x"), &mut Default::default()),
+            Ok(vec![("x".into(), "1".into())].into_iter().collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("[?x 1]").unify(&Pattern::parse("[2 ?y]"), &mut Default::default()),
+            Ok(vec![("x".into(), "2".into()), ("y".into(), "1".into())]
+                .into_iter()
+                .collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("[1 1]").unify(&Pattern::parse("[?x ?x]"), &mut Default::default()),
+            Ok(vec![("x".into(), "1".into())].into_iter().collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("[1 2]").unify(&Pattern::parse("[?x ?x]"), &mut Default::default()),
+            Err(())
+        );
+
+        assert_eq!(
+            Pattern::parse("[?x 1]").unify(&Pattern::parse("[1 ?x]"), &mut Default::default()),
+            Ok(vec![("x".into(), "1".into())].into_iter().collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("[?x 1]").unify(&Pattern::parse("[?x ?x]"), &mut Default::default()),
+            Ok(vec![("x".into(), "1".into())].into_iter().collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("[?x 2]").unify(&Pattern::parse("[1 ?x]"), &mut Default::default()),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn unify_is_transitive() {
+        assert_eq!(
+            Pattern::parse("[?x ?x]").unify(&Pattern::parse("[?y 1]"), &mut Default::default()),
+            Ok(vec![("x".into(), "1".into()), ("y".into(), "1".into())]
+                .into_iter()
+                .collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("[?x ?x]").unify(&Pattern::parse("[1 ?y]"), &mut Default::default()),
+            Ok(vec![("x".into(), "1".into()), ("y".into(), "1".into())]
+                .into_iter()
+                .collect())
+        );
+
+        assert_eq!(
+            Pattern::parse("[?x ?y ?x]")
+                .unify(&Pattern::parse("[?z ?z 1]"), &mut Default::default()),
+            Ok(vec![
+                ("x".into(), "1".into()),
+                ("y".into(), "1".into()),
+                ("z".into(), "1".into())
+            ]
+            .into_iter()
+            .collect())
+        );
+    }
+
+    #[test]
+    fn unify_recursive() {
+        assert_eq!(
+            Pattern::parse("[?x ?x]")
+                .unify(&"[?self [x -> ?self]]".into(), &mut Default::default()),
+            Ok(vec![
+                ("x".into(), Pattern::Ref(0)),
+                ("self".into(), Pattern::Ref(0))
+            ]
+            .into_iter()
+            .collect())
+        );
+    }
+
+    #[test]
+    fn unify_corecursive() {
+        assert_eq!(
+            Pattern::parse("[?x ?y ?x ?y]").unify(
+                &"[?self_a ?self_b [x -> ?self_b] [y -> ?self_a]]".into(),
+                &mut Default::default()
+            ),
+            Ok(vec![
+                ("x".into(), Pattern::Ref(0)),
+                ("y".into(), Pattern::Ref(1)),
+                ("self_a".into(), Pattern::Ref(0)),
+                ("self_b".into(), Pattern::Ref(1))
+            ]
+            .into_iter()
+            .collect())
+        );
+    }
+
+    #[test]
+    fn unify_through_ref() {
+        let mut image = Default::default();
+        let unified_bindings = Pattern::parse("[?x [?z ?x]]")
+            .unify(&"[?y ?y]".into(), &mut image)
+            .unwrap();
+
+        assert_eq!(
+            unified_bindings,
+            vec![("x".into(), Pattern::Ref(0)), ("y".into(), Pattern::Ref(0)),]
+                .into_iter()
+                .collect()
+        );
+
+        assert_eq!(
+            image.deref(0),
+            Some(&vec!["?z".into(), Pattern::Ref(0)].into())
+        );
+
+        let mut unified = Pattern::parse("[?x [?z ?x]]");
+        unified.replace_holes(unified_bindings);
+
+        println!("Unified: {}", unified);
+
+        assert_eq!(
+            unified,
+            vec![Pattern::Ref(0), vec!["?z".into(), Pattern::Ref(0)].into()].into()
+        );
+
+        assert_eq!(
+            image.deref(0),
+            Some(&vec!["?z".into(), Pattern::Ref(0)].into())
+        );
+
+        assert_eq!(
+            unified.unify(&"[?x [1 ?y]]".into(), &mut image),
+            Ok(vec![
+                ("x".into(), Pattern::Ref(0)),
+                ("y".into(), Pattern::Ref(0)),
+                ("z".into(), "1".into())
+            ]
+            .into_iter()
+            .collect())
+        );
+
+        assert_eq!(
+            image.deref(0),
+            Some(&vec!["?z".into(), Pattern::Ref(0)].into())
+        );
+
+        println!("Unified: {}", unified);
+
+        assert_eq!(
+            unified.unify(&"[[1 ?b] ?b]".into(), &mut image),
+            Ok(
+                vec![("b".into(), Pattern::Ref(0)), ("z".into(), "1".into())]
+                    .into_iter()
+                    .collect()
+            )
+        );
+    }
+
+    #[test]
+    fn holes() {
+        let image = Image::default();
+        assert_eq!(
+            Pattern::parse("[?x [?y 1]").holes(&image),
+            vec!["x".into(), "y".into()].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn holes_through_ref() {
+        let mut image = Image::default();
+        let a = image.alloc_ref();
+        let b = image.alloc_ref();
+        image.store_ref(a, vec!["?x".into(), Pattern::Ref(b)].into());
+        image.store_ref(b, vec!["?z".into(), Pattern::Ref(a)].into());
+        assert_eq!(
+            Pattern::Seq(vec!["?y".into(), Pattern::Ref(a)]).holes(&image),
+            vec!["y".into(), "x".into(), "z".into()]
+                .into_iter()
+                .collect()
+        );
     }
 }
