@@ -1426,31 +1426,47 @@ fn keyboard_input_system(
 
 fn attract_matching_patterns_and_rewrites(
     mut image: ResMut<Image>,
-    mut rewrites: Query<(&Rewrite, &mut Kinematics)>,
-    mut patterns: Query<(&Pattern, &mut Kinematics)>,
+    mut rewrites_and_patterns: QuerySet<(
+        Query<(Entity, &Rewrite, &Kinematics)>,
+        Query<(Entity, &Pattern, &Kinematics)>,
+        Query<(Entity, &mut Kinematics), With<Rewrite>>,
+        Query<(Entity, &mut Kinematics), With<Pattern>>,
+    )>,
 ) {
     let force = 2000.;
-    for (pattern, mut pattern_kin) in patterns.iter_mut() {
-        for (rewrite, mut rewrite_kin) in rewrites.iter_mut() {
-            if rewrite.is_primitive() {
-                continue;
-            }
+    let mut forces: BTreeMap<(Entity, Entity), Vec2> = Default::default();
+    for (r_e, rewrite, rewrite_kin) in rewrites_and_patterns.q0().iter() {
+        if rewrite.is_primitive() {
+            continue;
+        }
+        for (p_e, pattern, pattern_kin) in rewrites_and_patterns.q1().iter() {
             let delta = rewrite_kin.pos - pattern_kin.pos;
             let dist = delta.length();
             if dist > 1e-6 {
                 if rewrite.0.unify(&pattern, &mut image).is_ok() {
                     let force_vec = delta / dist.max(1.0).powf(2.0)
                         * (force + (rewrite.0.complexity() as f32) * 10.0);
-
-                    pattern_kin.vel += force_vec;
-                    rewrite_kin.vel -= force_vec;
+                    forces.insert((r_e, p_e), force_vec);
                 } else if dist < 400. {
                     let force_vec = -delta / (dist + 1.5).powf(2.0) * 1000.;
-                    pattern_kin.vel += force_vec;
-                    rewrite_kin.vel -= force_vec;
+                    forces.insert((r_e, p_e), force_vec);
                 }
             }
         }
+    }
+    for (r_e, mut rewrite_kin) in rewrites_and_patterns.q2_mut().iter_mut() {
+        rewrite_kin.vel -= forces
+            .iter()
+            .filter(|((e, _), _)| e == &r_e)
+            .map(|(_, f)| f)
+            .sum();
+    }
+    for (p_e, mut pattern_kin) in rewrites_and_patterns.q3_mut().iter_mut() {
+        pattern_kin.vel += forces
+            .iter()
+            .filter(|((_, e), _)| e == &p_e)
+            .map(|(_, f)| f)
+            .sum();
     }
 }
 
