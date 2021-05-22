@@ -13,14 +13,17 @@ use bevy::input::{
 };
 use bevy::prelude::*;
 use bevy::render::camera::Camera;
+use bevy::text::Text2dSize;
 use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
+use bevy_inspector_egui::Inspectable;
 use serde::{Deserialize, Serialize};
 
 fn main() {
     App::build()
         .add_plugins(DefaultPlugins)
         .add_plugin(EguiPlugin)
+        .add_plugin(bevy_inspector_egui::WorldInspectorPlugin::new())
         .add_startup_system(setup.system())
         .add_event::<CompileEvent>()
         .add_startup_stage(
@@ -79,6 +82,10 @@ fn spawn_rewrite(
             GlobalTransform::default(),
             Transform::default(),
             BBox::default(),
+            Visible {
+                is_visible: false,
+                ..Default::default()
+            },
         ))
         .with_children(|parent| {
             parent
@@ -98,6 +105,14 @@ fn spawn_rewrite(
                     ),
                     ..Default::default()
                 })
+                .insert(Visible {
+                    is_visible: false,
+                    ..Default::default()
+                })
+                .insert(TextWithBG)
+                .insert(FollowParent)
+                .insert(TopPattern)
+                .insert(BBox::default())
                 .with_children(|parent| {
                     parent
                         .spawn()
@@ -113,15 +128,7 @@ fn spawn_rewrite(
                         .insert(PatternBG)
                         .insert(FollowParent)
                         .insert(BBox::default());
-                })
-                .insert(Visible {
-                    is_visible: false,
-                    ..Default::default()
-                })
-                .insert(TextWithBG)
-                .insert(FollowParent)
-                .insert(TopPattern)
-                .insert(BBox::default());
+                });
             parent
                 .spawn()
                 .insert_bundle(SpriteBundle {
@@ -153,6 +160,10 @@ fn spawn_rewrite(
                     ),
                     ..Default::default()
                 })
+                .insert(TextWithBG)
+                .insert(FollowParent)
+                .insert(BottomPattern)
+                .insert(BBox::default())
                 .with_children(|parent| {
                     parent
                         .spawn()
@@ -172,15 +183,7 @@ fn spawn_rewrite(
                 .insert(Visible {
                     is_visible: false,
                     ..Default::default()
-                })
-                .insert(TextWithBG)
-                .insert(FollowParent)
-                .insert(BottomPattern)
-                .insert(BBox::default());
-        })
-        .insert(Visible {
-            is_visible: false,
-            ..Default::default()
+                });
         });
 }
 
@@ -388,19 +391,19 @@ fn kinematics_system(
 }
 
 fn ars_term_bg(
-    calculated_size_q: Query<(&CalculatedSize, &Children), With<TextWithBG>>,
+    text_size_q: Query<(&Text2dSize, &Children), With<TextWithBG>>,
     mut sprites: Query<(&mut Sprite, &mut Transform), With<PatternBG>>,
 ) {
-    for (calculated_size, children) in calculated_size_q.iter() {
+    for (text_size, children) in text_size_q.iter() {
         for child in children.iter() {
             if let Ok((mut s, mut trans)) = sprites.get_mut(*child) {
                 let margin = 0.0;
                 s.size = Vec2::new(
-                    calculated_size.size.width + margin,
-                    calculated_size.size.height + margin,
+                    text_size.size.width + margin,
+                    text_size.size.height + margin,
                 );
-                trans.translation.x = -calculated_size.size.width * 0.5;
-                trans.translation.y = -calculated_size.size.height * 0.5;
+                trans.translation.x = -text_size.size.width * 0.5;
+                trans.translation.y = -text_size.size.height * 0.5;
             }
         }
     }
@@ -408,8 +411,8 @@ fn ars_term_bg(
 
 fn rewrite_layout(
     terms: Query<&Children, With<Rewrite>>,
-    top_patterns: Query<&CalculatedSize, With<TopPattern>>,
-    bottom_patterns: Query<&CalculatedSize, With<BottomPattern>>,
+    top_patterns: Query<&Text2dSize, With<TopPattern>>,
+    bottom_patterns: Query<&Text2dSize, With<BottomPattern>>,
     mut trans_q: QuerySet<(
         Query<&mut Transform, With<TopPattern>>,
         Query<&mut Transform, With<BottomPattern>>,
@@ -421,12 +424,12 @@ fn rewrite_layout(
         let mut top_width = None;
         let mut bottom_width = None;
         for child in children.iter() {
-            if let Ok(calc_size) = top_patterns.get(*child) {
-                top_height = Some(calc_size.size.height);
-                top_width = Some(calc_size.size.width);
+            if let Ok(text_size) = top_patterns.get(*child) {
+                top_height = Some(text_size.size.height);
+                top_width = Some(text_size.size.width);
             }
-            if let Ok(calc_size) = bottom_patterns.get(*child) {
-                bottom_width = Some(calc_size.size.width);
+            if let Ok(text_size) = bottom_patterns.get(*child) {
+                bottom_width = Some(text_size.size.width);
             }
         }
         if let (Some(top_h), Some(top_w), Some(bottom_w)) = (top_height, top_width, bottom_width) {
@@ -456,15 +459,15 @@ fn propagate_bboxes(
     sprites: Query<(Entity, &Sprite), With<BBox>>,
     transforms: Query<&Transform, With<BBox>>,
     parents: Query<(Entity, &Children), With<BBox>>,
-    mut global_transforms: Query<&mut GlobalTransform, With<BBox>>,
+    global_transforms: Query<&GlobalTransform, With<BBox>>,
     roots: Query<Entity, Without<Parent>>,
     mut visibility: Query<&mut Visible>,
-    kin: Query<&Kinematics>,
 ) {
     for (e, sprite) in sprites.iter() {
         if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
             bbox.upper_right = sprite.size * 0.5 + trans.translation.truncate();
             bbox.lower_left = -sprite.size * 0.5 + trans.translation.truncate();
+
             assert!(bbox.height() >= 0.0, "{:?}", bbox);
             assert!(bbox.width() >= 0.0, "{:?}", bbox);
         }
@@ -478,18 +481,19 @@ fn propagate_bboxes(
         let mut parent_bbox = BBox::default();
 
         for child in children.iter() {
-            let child_bbox = bboxes.get_mut(*child);
-            if let Ok(child_bbox) = child_bbox {
+            if let Ok(child_bbox) = bboxes.get_mut(*child) {
                 parent_bbox.upper_right = child_bbox.upper_right.max(parent_bbox.upper_right);
                 parent_bbox.lower_left = child_bbox.lower_left.min(parent_bbox.lower_left);
                 assert!(parent_bbox.height() >= 0.0, "{:?}", parent_bbox);
                 assert!(parent_bbox.width() >= 0.0, "{:?}", parent_bbox);
+            } else {
+                println!("skipping child {:?}", child);
             }
         }
 
         let mut global_translation = if roots.get(parent).is_ok() {
             global_transforms
-                .get_mut(parent)
+                .get(parent)
                 .map(|t| *t)
                 .ok()
                 .unwrap_or_default()
@@ -504,6 +508,7 @@ fn propagate_bboxes(
                 .translation
                 .truncate()
         };
+
         if global_translation.x.is_nan() || global_translation.y.is_nan() {
             global_translation = Default::default();
         }
@@ -515,12 +520,6 @@ fn propagate_bboxes(
             bbox.lower_left = parent_bbox.lower_left + global_translation;
             assert!(bbox.height() >= 0.0, "{:?}", bbox);
             assert!(bbox.width() >= 0.0, "{:?}", bbox);
-
-            if let (Ok(k), Ok(mut transform)) = (kin.get(parent), global_transforms.get_mut(parent))
-            {
-                transform.translation.x = k.pos.x + bbox.width() * 0.5;
-                transform.translation.y = k.pos.y + bbox.height() * 0.5;
-            }
         }
 
         if let Ok(mut v) = visibility.get_mut(parent) {
@@ -566,14 +565,14 @@ fn print_mouse_events_system(
                 ..
             } => (),
             MouseWheel {
-                unit: MouseScrollUnit::Line,
-                y,
+                // unit: MouseScrollUnit::Line,
+                // y,
                 ..
             } => {
-                if let Some((_, mut cam_trans)) = camera_query.iter_mut().next() {
-                    cam_trans.scale.x += y * 0.1;
-                    cam_trans.scale.y += y * 0.1;
-                    cam_trans.scale.z += y * 0.1;
+                if let Some((_, mut _cam_trans)) = camera_query.iter_mut().next() {
+                    // cam_trans.scale.x += y * 0.1;
+                    // cam_trans.scale.y += y * 0.1;
+                    // cam_trans.scale.z += y * 0.1;
                 }
             }
         }
@@ -593,8 +592,10 @@ fn print_mouse_events_system(
                         upper_right,
                         lower_left,
                     };
+
                     if bbox_on_screen.contains(pointer.pos) {
                         pointer.holding = Some(entity);
+                        println!("Holding {:?}", entity);
                         break;
                     }
                 }
@@ -679,14 +680,15 @@ struct TopPattern;
 struct BottomPattern;
 struct FollowParent;
 struct TextWithBG;
-#[derive(Default, Debug)]
+
+#[derive(Default, Debug, Inspectable)]
 struct Pointer {
     down: bool,
     pos: Vec2,
     drag_start: Vec2,
     holding: Option<Entity>,
 }
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Inspectable)]
 struct BBox {
     upper_right: Vec2,
     lower_left: Vec2,
@@ -750,7 +752,7 @@ struct Materials {
     surfboard_line_color: Handle<ColorMaterial>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Inspectable)]
 struct Kinematics {
     pos: Vec2,
     vel: Vec2,
@@ -809,7 +811,7 @@ impl Image {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Inspectable)]
 struct Rewrite(Pattern, Pattern);
 
 impl Rewrite {
@@ -828,7 +830,7 @@ impl std::fmt::Display for Rewrite {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, Inspectable)]
 enum Pattern {
     Sym(String),       // ==> concrete value
     Hole(String),      // ==> ?var
