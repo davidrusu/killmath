@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::BufReader;
 
 use bevy::input::{
     keyboard::KeyCode,
@@ -18,7 +18,6 @@ use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
 use serde::{Deserialize, Serialize};
 
-/// This example illustrates the various features of Bevy UI.
 fn main() {
     App::build()
         .add_plugins(DefaultPlugins)
@@ -32,13 +31,11 @@ fn main() {
         .add_system(compile_input.system())
         .add_system(listener_prompt.system())
         .add_system(keyboard_input_system.system())
-        // .add_system(ars_ui.system())
         .add_system(attract_matching_patterns_and_rewrites.system())
         .add_system(update_listener.system())
         .add_system(ars.system())
         .add_system(persistence.system())
         .add_system(ars_layout.system())
-        //.add_system(update_positions.system())
         .add_system(propagate_bboxes.system())
         .add_system(ars_term_bg.system())
         .add_system(rewrite_layout.system())
@@ -71,7 +68,6 @@ fn spawn_rewrite(
     rewrite: Rewrite,
 ) {
     println!("Spawning rewrite: {}", rewrite);
-    // commands.spawn((ARS, rewrite));
     commands
         .spawn((
             ARS,
@@ -192,7 +188,6 @@ fn spawn_pattern(
     pattern: Pattern,
 ) {
     println!("Spawning pattern: {}", pattern);
-    // commands.spawn((ARS, pattern));
     commands
         .spawn(Text2dBundle {
             text: Text::with_section(
@@ -254,8 +249,6 @@ fn setup(
         .insert_resource(Materials {
             pattern_color: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.3).into()),
             rewrite_color: materials.add(Color::rgba(1.0, 0.8, 0.1, 0.1).into()),
-            highlight_color: materials.add(Color::rgba(1.0, 0.0, 0.0, 0.5).into()),
-            font_color: materials.add(Color::rgb(0.9, 0.9, 0.9).into()),
             surfboard_line_color: materials.add(Color::rgb(0.0, 0.0, 0.0).into()),
         })
         .insert_resource(ARSFont(asset_server.load("fonts/iosevka-medium.ttf")));
@@ -433,14 +426,12 @@ fn rewrite_layout(
                     sprite.size = Vec2::new(surfboard_w, 1.5);
                     trans.translation.y = -top_h - buffer;
                     trans.translation.x = -rewrite_w * 0.5;
-                    // trans.translation.x = -rewrite_w * 0.5;
                 }
                 if let Ok((mut trans, _)) = bottom_patterns.get_mut(*child) {
                     trans.translation.y = -(top_h + buffer * 2.0);
                     trans.translation.x = -(rewrite_w - bottom_w) * 0.5;
                 }
                 if let Ok((mut trans, _)) = top_patterns.get_mut(*child) {
-                    // trans.translation.y = -(top_h + 10.0);
                     trans.translation.x = -(rewrite_w - top_w) * 0.5;
                 }
             }
@@ -526,7 +517,6 @@ fn propagate_bboxes(
     }
 }
 
-// This system prints out all mouse events as they come in
 fn print_mouse_events_system(
     windows: Res<Windows>,
     mut pointer: ResMut<Pointer>,
@@ -550,9 +540,7 @@ fn print_mouse_events_system(
         }
     }
 
-    for _event in mouse_motion_events.iter() {
-        //println!("{:?}", event);
-    }
+    for _event in mouse_motion_events.iter() {}
 
     for event in cursor_moved_events.iter() {
         pointer.pos = event.position;
@@ -642,7 +630,7 @@ fn persistence(
     let image_file = "image.nimic";
     let image_file_tmp = "image.nimic.tmp";
     {
-        let mut tmp = File::create(image_file_tmp).unwrap();
+        let tmp = File::create(image_file_tmp).unwrap();
 
         // TODO: we may not need cloned here if Serialize is implemented for &T
         let pats: Vec<Pattern> = free_patterns.iter().cloned().collect();
@@ -652,7 +640,10 @@ fn persistence(
             .filter(|r| !r.is_primitive())
             .collect();
 
-        bincode::serialize_into(tmp, &(pats, rewrites, image.clone()));
+        if let Err(e) = bincode::serialize_into(tmp, &(pats, rewrites, image.clone())) {
+            println!("Failed save image: {:?}", e);
+            return;
+        }
     }
 
     std::fs::rename(image_file_tmp, image_file).unwrap();
@@ -696,10 +687,6 @@ impl BBox {
             upper_right: self.upper_right + buf,
             lower_left: self.lower_left - buf,
         }
-    }
-
-    fn size(&self) -> Vec2 {
-        Vec2::new(self.width(), self.height())
     }
 
     fn width(&self) -> f32 {
@@ -748,9 +735,7 @@ impl BBox {
 struct Materials {
     pattern_color: Handle<ColorMaterial>,
     rewrite_color: Handle<ColorMaterial>,
-    highlight_color: Handle<ColorMaterial>,
     surfboard_line_color: Handle<ColorMaterial>,
-    font_color: Handle<ColorMaterial>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -857,7 +842,7 @@ impl std::fmt::Display for Pattern {
                 }
                 write!(f, "]")
             }
-            Self::Ref(r) => write!(f, "...",),
+            Self::Ref(r) => write!(f, "~({})", r),
         }
     }
 }
@@ -977,7 +962,6 @@ impl Pattern {
                 for pat in seq.iter().intersperse(&Self::Sym(" ".into())) {
                     cumulative_complexity += pat.complexity();
                     if cumulative_complexity > 15 {
-                        //cumulative_complexity = 0;
                         wrapped = true;
                         if pat != &Self::Sym(" ".into()) {
                             pprint = format!("{}\n{}", pprint, indent);
@@ -1020,16 +1004,15 @@ impl Pattern {
         let mut roots = self.holes(image);
         roots.extend(other.holes(image));
 
-        let mut cycles = self.cycles(&bindings);
-
-        let cycle_breaks: BTreeMap<_, _> = cycles
+        let cycle_breaks: BTreeMap<_, _> = self
+            .cycles(&bindings)
             .into_iter()
             .map(|cyclic_hole| (cyclic_hole, image.alloc_ref()))
             .collect();
 
         for (cyclic_hole, r) in cycle_breaks.iter() {
             let ref_pat = Pattern::Ref(*r);
-            for (_, mut pat) in bindings.iter_mut() {
+            for (_, pat) in bindings.iter_mut() {
                 pat.replace_hole(&cyclic_hole, ref_pat.clone());
             }
         }
@@ -1137,22 +1120,18 @@ impl Pattern {
                     .intersection(&bindings.keys().cloned().collect())
                     .cloned()
                     .collect::<Vec<_>>();
-                // println!("Inlining {:?} {} -- {:?}", hole, pat, common_holes);
 
                 if common_holes.is_empty() {
                     // this pattern has no holes which are bindings.
-
                     match pat {
                         Pattern::Hole(pat_hole) if !roots.contains(&pat_hole) => {
-                            for (other_hole, other_pat) in bindings.iter_mut() {
-                                // println!("  into {:?} {}", other_hole, other_pat);
+                            for (_, other_pat) in bindings.iter_mut() {
                                 changed = changed
                                     | other_pat.replace_hole(&pat_hole, Pattern::Hole(hole.clone()))
                             }
                         }
                         pat => {
-                            for (other_hole, other_pat) in bindings.iter_mut() {
-                                // println!("  into {:?} {}", other_hole, other_pat);
+                            for (_, other_pat) in bindings.iter_mut() {
                                 changed = changed | other_pat.replace_hole(&hole, pat.clone())
                             }
                         }
@@ -1201,42 +1180,6 @@ impl Pattern {
         }
     }
 
-    fn bind(&self, other: &Self) -> Result<Vec<(String, Self)>, ()> {
-        match (self, other) {
-            (Self::Sym(a), Self::Sym(b)) => {
-                if a == b {
-                    Ok(Default::default())
-                } else {
-                    Err(())
-                }
-            }
-            (Self::Hole(hole), pat) => Ok(vec![(hole.clone(), pat.clone())]),
-            (Self::Seq(a_seq), Self::Seq(b_seq)) => {
-                if a_seq.len() != b_seq.len() {
-                    Err(())
-                } else {
-                    let mut bindings: Vec<_> = Default::default();
-                    for (a, b) in a_seq.iter().zip(b_seq.iter()) {
-                        bindings.extend(a.bind(&b)?);
-                    }
-                    Ok(bindings)
-                }
-            }
-            _ => Err(()),
-        }
-    }
-
-    fn apply(&self, bindings: Vec<(String, Pattern)>) -> Self {
-        let bindings_map: BTreeMap<String, Pattern> = bindings.iter().cloned().collect();
-        match self {
-            Self::Hole(hole) if bindings_map.contains_key(hole) => {
-                bindings_map.get(hole).unwrap().clone()
-            }
-            Self::Seq(seq) => Self::Seq(seq.iter().map(|p| p.apply(bindings.clone())).collect()),
-            pat => pat.clone(),
-        }
-    }
-
     /// Returns all holes who directly or indirectly refer to themselves
     fn cycles(&self, bindings: &BTreeMap<String, Self>) -> BTreeSet<String> {
         let mut reachable: BTreeMap<String, BTreeSet<String>> = Default::default();
@@ -1249,7 +1192,6 @@ impl Pattern {
         }
         let mut reachable_set_changed = true;
         while reachable_set_changed {
-            reachable_set_changed = false;
             let mut to_expand = Vec::new();
             for (parent_hole, child_holes) in reachable.iter() {
                 for child in child_holes.iter() {
@@ -1329,7 +1271,7 @@ impl Pattern {
                 .iter_mut()
                 .map(|p| p.replace_hole(hole, pat.clone()))
                 .fold(false, |changed, replace_res| changed | replace_res),
-            pat => false,
+            _ => false,
         }
     }
 
@@ -1343,8 +1285,8 @@ impl Pattern {
 
     fn complexity(&self) -> usize {
         match self {
-            Self::Sym(s) => 1,
-            Self::Hole(h) => 2,
+            Self::Sym(_) => 1,
+            Self::Hole(_) => 2,
             Self::Seq(seq) => seq.iter().map(Self::complexity).sum::<usize>() + 1,
             Self::Ref(_) => 9,
         }
@@ -1385,7 +1327,7 @@ fn listener_prompt(
                 .text_style(egui::TextStyle::Monospace),
         );
         ui.horizontal(|ui| {
-            if ui.button("parse").clicked() && !listener_state.command.is_empty() {
+            if ui.button("compile").clicked() && !listener_state.command.is_empty() {
                 compile_events.send(CompileEvent);
             }
             if ui.button("format").clicked() {
@@ -1463,7 +1405,6 @@ fn compile_input(
     }
 }
 
-/// This system prints 'A' key state
 fn keyboard_input_system(
     mut compile_events: ResMut<Events<CompileEvent>>,
     keyboard_input: Res<Input<KeyCode>>,
@@ -1480,7 +1421,7 @@ fn attract_matching_patterns_and_rewrites(
     mut rewrites: Query<(&Rewrite, &mut Kinematics)>,
     mut patterns: Query<(&Pattern, &mut Kinematics)>,
 ) {
-    let force = 10000.;
+    let force = 2000.;
     for (pattern, mut pattern_kin) in patterns.iter_mut() {
         for (rewrite, mut rewrite_kin) in rewrites.iter_mut() {
             if rewrite.is_primitive() {
@@ -1490,8 +1431,9 @@ fn attract_matching_patterns_and_rewrites(
             let dist = delta.length();
             if dist > 1e-6 {
                 if rewrite.0.unify(&pattern, &mut image).is_ok() {
-                    let force_vec =
-                        delta / dist.powf(2.5) * (force + (rewrite.0.complexity() as f32) * 10.0);
+                    let force_vec = delta / dist.max(1.0).powf(2.0)
+                        * (force + (rewrite.0.complexity() as f32) * 10.0);
+
                     pattern_kin.vel += force_vec;
                     rewrite_kin.vel -= force_vec;
                 } else if dist < 400. {
@@ -1551,9 +1493,8 @@ fn step_ars(
                 candidate_rewrites.push((rewrite.clone(), bindings, rewrite_entity));
             }
         }
-        candidate_rewrites.sort_by(|(r_a, r_a_bindings, _), (r_b, r_b_bindings, _)| {
-            r_a.0.complexity().cmp(&r_b.0.complexity())
-        });
+        candidate_rewrites
+            .sort_by(|(r_a, _, _), (r_b, _, _)| r_a.0.complexity().cmp(&r_b.0.complexity()));
         if let Some((rewrite, bindings, rewrite_entity)) = candidate_rewrites.pop() {
             println!("Pattern: {}", pattern);
             println!("Candidates: {:?}", candidate_rewrites);
@@ -1654,34 +1595,6 @@ fn ars(
     }
 
     step_ars(commands, image, materials, font, rewrites, free_patterns);
-}
-
-fn ars_ui(
-    mut egui_context: ResMut<EguiContext>,
-    patterns: Query<&Pattern, With<ARS>>,
-    rewrites: Query<&Rewrite, With<ARS>>,
-) {
-    let ctx = &mut egui_context.ctx;
-    for (i, pattern) in patterns.iter().enumerate() {
-        egui::Window::new(format!("{}. {}", i, pattern))
-            .title_bar(false)
-            .show(ctx, |ui| {
-                ui.label(format!("{}", pattern));
-            });
-    }
-
-    for (i, rewrite) in rewrites.iter().enumerate() {
-        egui::Window::new(format!("{}. {} => {}", i, rewrite.0, rewrite.1))
-            .title_bar(false)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.vertical(|ui| {
-                    ui.monospace(format!("{}", rewrite.0));
-                    ui.separator();
-                    ui.monospace(format!("{}", rewrite.1));
-                });
-            });
-    }
 }
 
 #[cfg(test)]
