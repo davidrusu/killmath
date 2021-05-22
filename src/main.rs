@@ -408,38 +408,42 @@ fn ars_term_bg(
 
 fn rewrite_layout(
     terms: Query<&Children, With<Rewrite>>,
-    mut top_patterns: Query<(&mut Transform, &CalculatedSize), With<TopPattern>>,
-    mut surfboards: Query<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
-    mut bottom_patterns: Query<(&mut Transform, &CalculatedSize), With<BottomPattern>>,
+    top_patterns: Query<&CalculatedSize, With<TopPattern>>,
+    bottom_patterns: Query<&CalculatedSize, With<BottomPattern>>,
+    mut trans_q: QuerySet<(
+        Query<&mut Transform, With<TopPattern>>,
+        Query<&mut Transform, With<BottomPattern>>,
+        Query<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
+    )>,
 ) {
     for children in terms.iter() {
         let mut top_height = None;
         let mut top_width = None;
         let mut bottom_width = None;
         for child in children.iter() {
-            if let Ok((_, calc_size)) = top_patterns.get_mut(*child) {
+            if let Ok(calc_size) = top_patterns.get(*child) {
                 top_height = Some(calc_size.size.height);
                 top_width = Some(calc_size.size.width);
             }
-            if let Ok((_, calc_size)) = bottom_patterns.get_mut(*child) {
+            if let Ok(calc_size) = bottom_patterns.get(*child) {
                 bottom_width = Some(calc_size.size.width);
             }
         }
         if let (Some(top_h), Some(top_w), Some(bottom_w)) = (top_height, top_width, bottom_width) {
             let rewrite_w = top_w.max(bottom_w);
             let buffer = 5.0;
+            let surfboard_w = rewrite_w + 20.0;
             for child in children.iter() {
-                if let Ok((mut trans, mut sprite)) = surfboards.get_mut(*child) {
-                    let surfboard_w = rewrite_w + 20.0;
+                if let Ok((mut trans, mut sprite)) = trans_q.q2_mut().get_mut(*child) {
                     sprite.size = Vec2::new(surfboard_w, 1.5);
                     trans.translation.y = -top_h - buffer;
                     trans.translation.x = -rewrite_w * 0.5;
                 }
-                if let Ok((mut trans, _)) = bottom_patterns.get_mut(*child) {
+                if let Ok(mut trans) = trans_q.q1_mut().get_mut(*child) {
                     trans.translation.y = -(top_h + buffer * 2.0);
                     trans.translation.x = -(rewrite_w - bottom_w) * 0.5;
                 }
-                if let Ok((mut trans, _)) = top_patterns.get_mut(*child) {
+                if let Ok(mut trans) = trans_q.q0_mut().get_mut(*child) {
                     trans.translation.x = -(rewrite_w - top_w) * 0.5;
                 }
             }
