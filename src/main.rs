@@ -13,7 +13,6 @@ use bevy::input::{
 };
 use bevy::prelude::*;
 use bevy::render::camera::Camera;
-use bevy::text::CalculatedSize;
 use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
 use serde::{Deserialize, Serialize};
@@ -69,7 +68,8 @@ fn spawn_rewrite(
 ) {
     println!("Spawning rewrite: {}", rewrite);
     commands
-        .spawn((
+        .spawn()
+        .insert_bundle((
             ARS,
             rewrite.clone(),
             Kinematics {
@@ -82,7 +82,8 @@ fn spawn_rewrite(
         ))
         .with_children(|parent| {
             parent
-                .spawn(Text2dBundle {
+                .spawn()
+                .insert_bundle(Text2dBundle {
                     text: Text::with_section(
                         rewrite.0.pprint(image),
                         TextStyle {
@@ -99,7 +100,8 @@ fn spawn_rewrite(
                 })
                 .with_children(|parent| {
                     parent
-                        .spawn(SpriteBundle {
+                        .spawn()
+                        .insert_bundle(SpriteBundle {
                             material: materials.rewrite_color.clone(),
                             sprite: Sprite::new(Vec2::default()),
                             visible: Visible {
@@ -108,20 +110,21 @@ fn spawn_rewrite(
                             },
                             ..Default::default()
                         })
-                        .with(PatternBG)
-                        .with(FollowParent)
-                        .with(BBox::default());
+                        .insert(PatternBG)
+                        .insert(FollowParent)
+                        .insert(BBox::default());
                 })
-                .with(Visible {
+                .insert(Visible {
                     is_visible: false,
                     ..Default::default()
                 })
-                .with(TextWithBG)
-                .with(FollowParent)
-                .with(TopPattern)
-                .with(BBox::default());
+                .insert(TextWithBG)
+                .insert(FollowParent)
+                .insert(TopPattern)
+                .insert(BBox::default());
             parent
-                .spawn(SpriteBundle {
+                .spawn()
+                .insert_bundle(SpriteBundle {
                     material: materials.surfboard_line_color.clone(),
                     sprite: Sprite::new(Vec2::new(1.0, 1.0)),
                     visible: Visible {
@@ -130,11 +133,12 @@ fn spawn_rewrite(
                     },
                     ..Default::default()
                 })
-                .with(SurfboardLine)
-                .with(FollowParent)
-                .with(BBox::default());
+                .insert(SurfboardLine)
+                .insert(FollowParent)
+                .insert(BBox::default());
             parent
-                .spawn(Text2dBundle {
+                .spawn()
+                .insert_bundle(Text2dBundle {
                     text: Text::with_section(
                         rewrite.1.pprint(image),
                         TextStyle {
@@ -151,7 +155,8 @@ fn spawn_rewrite(
                 })
                 .with_children(|parent| {
                     parent
-                        .spawn(SpriteBundle {
+                        .spawn()
+                        .insert_bundle(SpriteBundle {
                             material: materials.rewrite_color.clone(),
                             sprite: Sprite::new(Vec2::new(1.0, 1.0)),
                             visible: Visible {
@@ -160,20 +165,20 @@ fn spawn_rewrite(
                             },
                             ..Default::default()
                         })
-                        .with(PatternBG)
-                        .with(FollowParent)
-                        .with(BBox::default());
+                        .insert(PatternBG)
+                        .insert(FollowParent)
+                        .insert(BBox::default());
                 })
-                .with(Visible {
+                .insert(Visible {
                     is_visible: false,
                     ..Default::default()
                 })
-                .with(TextWithBG)
-                .with(FollowParent)
-                .with(BottomPattern)
-                .with(BBox::default());
+                .insert(TextWithBG)
+                .insert(FollowParent)
+                .insert(BottomPattern)
+                .insert(BBox::default());
         })
-        .with(Visible {
+        .insert(Visible {
             is_visible: false,
             ..Default::default()
         });
@@ -189,7 +194,8 @@ fn spawn_pattern(
 ) {
     println!("Spawning pattern: {}", pattern);
     commands
-        .spawn(Text2dBundle {
+        .spawn()
+        .insert_bundle(Text2dBundle {
             text: Text::with_section(
                 pattern.pprint(image),
                 TextStyle {
@@ -206,7 +212,8 @@ fn spawn_pattern(
         })
         .with_children(|parent| {
             parent
-                .spawn(SpriteBundle {
+                .spawn()
+                .insert_bundle(SpriteBundle {
                     material: materials.pattern_color.clone(),
                     sprite: Sprite::new(Vec2::new(1.0, 1.0)),
                     visible: Visible {
@@ -215,18 +222,18 @@ fn spawn_pattern(
                     },
                     ..Default::default()
                 })
-                .with(PatternBG)
-                .with(BBox::default());
+                .insert(PatternBG)
+                .insert(BBox::default());
         })
-        .with(TextWithBG)
-        .with(ARS)
-        .with(pattern)
-        .with(Kinematics {
+        .insert(TextWithBG)
+        .insert(ARS)
+        .insert(pattern)
+        .insert(Kinematics {
             pos,
             ..Default::default()
         })
-        .with(BBox::default())
-        .with(Visible {
+        .insert(BBox::default())
+        .insert(Visible {
             is_visible: false,
             ..Default::default()
         });
@@ -234,28 +241,29 @@ fn spawn_pattern(
 
 struct ARSFont(Handle<Font>);
 fn setup(
-    commands: &mut Commands,
+    mut commands: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
     commands
-        .spawn(OrthographicCameraBundle::new_2d())
-        .insert_resource(Image::default())
-        .insert_resource(ARSTimer(Timer::from_seconds(0.01, true)))
-        .insert_resource(RewriteTimer(Timer::from_seconds(0.1, true)))
-        .insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)))
-        .insert_resource(ListenerState::default())
-        .insert_resource(Pointer::default())
-        .insert_resource(Materials {
-            pattern_color: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.3).into()),
-            rewrite_color: materials.add(Color::rgba(1.0, 0.8, 0.1, 0.1).into()),
-            surfboard_line_color: materials.add(Color::rgb(0.0, 0.0, 0.0).into()),
-        })
-        .insert_resource(ARSFont(asset_server.load("fonts/iosevka-medium.ttf")));
+        .spawn()
+        .insert_bundle(OrthographicCameraBundle::new_2d());
+    commands.insert_resource(Image::default());
+    commands.insert_resource(ARSTimer(Timer::from_seconds(0.01, true)));
+    commands.insert_resource(RewriteTimer(Timer::from_seconds(0.1, true)));
+    commands.insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)));
+    commands.insert_resource(ListenerState::default());
+    commands.insert_resource(Pointer::default());
+    commands.insert_resource(Materials {
+        pattern_color: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.3).into()),
+        rewrite_color: materials.add(Color::rgba(1.0, 0.8, 0.1, 0.1).into()),
+        surfboard_line_color: materials.add(Color::rgb(0.0, 0.0, 0.0).into()),
+    });
+    commands.insert_resource(ARSFont(asset_server.load("fonts/iosevka-medium.ttf")));
 }
 
 fn spawn_initial_state(
-    commands: &mut Commands,
+    mut commands: Commands,
     mut image: ResMut<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
@@ -263,7 +271,7 @@ fn spawn_initial_state(
     spawn_rewrite(
         &image,
         Kinematics::random().pos,
-        commands,
+        &mut commands,
         &materials,
         &font,
         fork_rewrite(),
@@ -271,7 +279,7 @@ fn spawn_initial_state(
     spawn_rewrite(
         &image,
         Kinematics::random().pos,
-        commands,
+        &mut commands,
         &materials,
         &font,
         rewrite_rewrite(),
@@ -287,7 +295,7 @@ fn spawn_initial_state(
             spawn_pattern(
                 &image,
                 Kinematics::random().pos * 10.0,
-                commands,
+                &mut commands,
                 &materials,
                 &font,
                 pat,
@@ -298,7 +306,7 @@ fn spawn_initial_state(
             spawn_rewrite(
                 &image,
                 Kinematics::random().pos * 10.0,
-                commands,
+                &mut commands,
                 &materials,
                 &font,
                 rewrite,
@@ -364,7 +372,7 @@ fn kinematics_system(
     mut kinematics: Query<(Entity, &mut Kinematics)>,
     mut positions: Query<(&BBox, &mut GlobalTransform)>,
 ) {
-    if !timer.0.tick(time.delta_seconds()).just_finished() {
+    if !timer.0.tick(time.delta()).just_finished() {
         return;
     }
     for (e, mut k) in kinematics.iter_mut() {
@@ -623,7 +631,7 @@ fn persistence(
     rewrites: Query<&Rewrite, With<ARS>>,
     free_patterns: Query<&Pattern, With<ARS>>,
 ) {
-    if !timer.0.tick(time.delta_seconds()).just_finished() {
+    if !timer.0.tick(time.delta()).just_finished() {
         return;
     }
 
@@ -1294,8 +1302,8 @@ impl Pattern {
 }
 
 fn listener_prompt(
-    commands: &mut Commands,
-    mut compile_events: ResMut<Events<CompileEvent>>,
+    mut commands: Commands,
+    mut compile_events: EventWriter<CompileEvent>,
     mut rewrite_timer: ResMut<RewriteTimer>,
     image: ResMut<Image>,
     materials: Res<Materials>,
@@ -1305,7 +1313,7 @@ fn listener_prompt(
     mut listener_state: ResMut<ListenerState>,
     mut egui_context: ResMut<EguiContext>,
 ) {
-    let ctx = &mut egui_context.ctx;
+    let ctx = &mut egui_context.ctx();
     let mut fonts = egui::FontDefinitions::default();
     fonts.family_and_size.insert(
         egui::TextStyle::Monospace,
@@ -1336,12 +1344,12 @@ fn listener_prompt(
             if ui.button("clear").clicked() {
                 for (e, r, _) in rewrites.iter() {
                     if !r.is_primitive() {
-                        commands.despawn_recursive(e);
+                        commands.entity(e).despawn_recursive();
                     }
                 }
 
                 for (e, _, _) in free_patterns.iter() {
-                    commands.despawn_recursive(e);
+                    commands.entity(e).despawn_recursive();
                 }
             }
             if rewrite_timer.0.paused() {
@@ -1376,7 +1384,7 @@ fn update_listener(
     }
 }
 fn compile_input(
-    commands: &mut Commands,
+    mut commands: Commands,
     mut compile_reader: EventReader<CompileEvent>,
     image: Res<Image>,
     materials: Res<Materials>,
@@ -1395,7 +1403,7 @@ fn compile_input(
             spawn_pattern(
                 &image,
                 Kinematics::random().pos * 10.0,
-                commands,
+                &mut commands,
                 &materials,
                 &font,
                 pattern,
@@ -1406,7 +1414,7 @@ fn compile_input(
 }
 
 fn keyboard_input_system(
-    mut compile_events: ResMut<Events<CompileEvent>>,
+    mut compile_events: EventWriter<CompileEvent>,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
     if (keyboard_input.pressed(KeyCode::LControl) || keyboard_input.pressed(KeyCode::RControl))
@@ -1447,7 +1455,7 @@ fn attract_matching_patterns_and_rewrites(
 }
 
 fn step_ars(
-    commands: &mut Commands,
+    mut commands: Commands,
     mut image: ResMut<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
@@ -1499,7 +1507,7 @@ fn step_ars(
             println!("Pattern: {}", pattern);
             println!("Candidates: {:?}", candidate_rewrites);
             println!("Bindings {:?}", bindings);
-            commands.despawn_recursive(pattern_entity);
+            commands.entity(pattern_entity).despawn_recursive();
             if !rewrite.is_primitive() {
                 spent_rewrites.insert(rewrite_entity);
             }
@@ -1521,7 +1529,7 @@ fn step_ars(
                     spawn_rewrite(
                         &image,
                         spawn_position,
-                        commands,
+                        &mut commands,
                         &materials,
                         &font,
                         Rewrite(pattern, rewrite),
@@ -1542,7 +1550,7 @@ fn step_ars(
                     spawn_pattern(
                         &image,
                         spawn_position + Vec2::new(-0.1, 0.0),
-                        commands,
+                        &mut commands,
                         &materials,
                         &font,
                         left,
@@ -1550,7 +1558,7 @@ fn step_ars(
                     spawn_pattern(
                         &image,
                         spawn_position + Vec2::new(0.1, 0.0),
-                        commands,
+                        &mut commands,
                         &materials,
                         &font,
                         right,
@@ -1566,11 +1574,11 @@ fn step_ars(
                 };
                 let mut rewritten_pattern = rewrite.1.clone();
                 rewritten_pattern.replace_holes(bindings);
-                commands.despawn_recursive(rewrite_entity);
+                commands.entity(rewrite_entity).despawn_recursive();
                 spawn_pattern(
                     &image,
                     spawn_position,
-                    commands,
+                    &mut commands,
                     &materials,
                     &font,
                     rewritten_pattern,
@@ -1584,13 +1592,13 @@ fn ars(
     time: Res<Time>,
     mut timer: ResMut<RewriteTimer>,
     image: ResMut<Image>,
-    commands: &mut Commands,
+    commands: Commands,
     materials: Res<Materials>,
     font: Res<ARSFont>,
     rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
 ) {
-    if !timer.0.tick(time.delta_seconds()).just_finished() {
+    if !timer.0.tick(time.delta()).just_finished() {
         return;
     }
 
