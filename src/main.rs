@@ -46,14 +46,14 @@ fn main() {
 
 fn rewrite_rewrite() -> Rewrite {
     Rewrite(
-        Pattern::parse("?pattern -> ?rewrite".into()),
+        Pattern::parse("?pattern -> ?rewrite"),
         Pattern::parse("<defined>"),
     )
 }
 
 fn fork_rewrite() -> Rewrite {
     Rewrite(
-        Pattern::parse("fork ?left ?right".into()),
+        Pattern::parse("fork ?left ?right"),
         Pattern::parse("<?left and ?right as individual entities>"),
     )
 }
@@ -486,7 +486,7 @@ fn propagate_bboxes(
         let mut global_translation = if roots.get(parent).is_ok() {
             global_transforms
                 .get_mut(parent)
-                .map(|t| t.clone())
+                .map(|t| *t)
                 .ok()
                 .unwrap_or_default()
                 .translation
@@ -889,9 +889,10 @@ impl Tok {
         tokens.push(tok_builder(raw[token_start..].to_string()));
         tokens
             .into_iter()
-            .filter(|t| match t {
-                Self::Sym(s) if s.chars().all(char::is_whitespace) => false,
-                _ => true,
+            .filter(|t| {
+                !matches!(t,
+                    Self::Sym(s) if s.chars().all(char::is_whitespace)
+                )
             })
             .collect()
     }
@@ -961,7 +962,7 @@ impl Pattern {
             .take(indent_level)
             .collect();
         match self {
-            Self::Sym(s) => format!("{}", s),
+            Self::Sym(s) => s.to_string(),
             Self::Hole(h) => format!("?{}", h),
             Self::Seq(seq) => {
                 let mut cumulative_complexity = 0;
@@ -1068,7 +1069,7 @@ impl Pattern {
                         (None, None) => {
                             let a_b_hole = image.alloc_hole();
                             bindings.insert(a.to_string(), Pattern::Hole(a_b_hole.clone()));
-                            bindings.insert(b.to_string(), Pattern::Hole(a_b_hole.clone()));
+                            bindings.insert(b.to_string(), Pattern::Hole(a_b_hole));
                             Ok(bindings)
                         }
                         (Some(pat), None) | (None, Some(pat)) => {
@@ -1123,24 +1124,23 @@ impl Pattern {
             let mut changed = false;
 
             for (hole, pat) in bindings.clone().into_iter() {
-                let common_holes = pat
+                let no_common_holes = pat
                     .holes_no_deref()
                     .intersection(&bindings.keys().cloned().collect())
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                if common_holes.is_empty() {
+                    .next()
+                    .is_none();
+                if no_common_holes {
                     // this pattern has no holes which are bindings.
                     match pat {
                         Pattern::Hole(pat_hole) if !roots.contains(&pat_hole) => {
                             for (_, other_pat) in bindings.iter_mut() {
-                                changed = changed
-                                    | other_pat.replace_hole(&pat_hole, Pattern::Hole(hole.clone()))
+                                changed |=
+                                    other_pat.replace_hole(&pat_hole, Pattern::Hole(hole.clone()))
                             }
                         }
                         pat => {
                             for (_, other_pat) in bindings.iter_mut() {
-                                changed = changed | other_pat.replace_hole(&hole, pat.clone())
+                                changed |= other_pat.replace_hole(&hole, pat.clone())
                             }
                         }
                     }
@@ -1148,7 +1148,7 @@ impl Pattern {
             }
 
             for (_, pat) in bindings.iter_mut() {
-                changed = changed | pat.inline_indirect_refs(image)
+                changed |= pat.inline_indirect_refs(image)
             }
 
             for (r, mut pat) in image.references.clone().into_iter() {
@@ -1163,7 +1163,7 @@ impl Pattern {
             }
         }
 
-        let non_root_bindings = &bindings.keys().cloned().collect::<BTreeSet<_>>() - &roots;
+        let non_root_bindings = &bindings.keys().cloned().collect::<BTreeSet<_>>() - roots;
         for non_root_binding in non_root_bindings {
             if bindings
                 .iter()
@@ -1264,7 +1264,7 @@ impl Pattern {
     fn replace_holes(&mut self, holes: BTreeMap<String, Self>) -> bool {
         let mut changed = false;
         for (hole, pat) in holes {
-            changed = changed | self.replace_hole(&hole, pat);
+            changed |= self.replace_hole(&hole, pat);
         }
         changed
     }
@@ -1311,7 +1311,7 @@ fn listener_prompt(
     rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
     mut listener_state: ResMut<ListenerState>,
-    mut egui_context: ResMut<EguiContext>,
+    egui_context: ResMut<EguiContext>,
 ) {
     let ctx = &mut egui_context.ctx();
     let mut fonts = egui::FontDefinitions::default();
@@ -1471,7 +1471,7 @@ fn step_ars(
         let pattern_holes: BTreeMap<_, _> = pattern
             .holes(&image)
             .into_iter()
-            .map(|h| (h, format!("{}", image.alloc_hole())))
+            .map(|h| (h, image.alloc_hole()))
             .collect();
         let pattern_renamed = pattern.clone().rename_holes(pattern_holes.clone());
 
