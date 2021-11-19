@@ -3,8 +3,8 @@ with pkgs;
 mkShell {
   buildInputs = [
     rustup
-    lld_11
-    clang_11
+    lld_12
+    clang_12
     xorg.libxcb
     pkgconfig udev alsaLib lutris
     x11 xorg.libXcursor xorg.libXrandr xorg.libXi
@@ -12,8 +12,8 @@ mkShell {
   ];
   LD_LIBRARY_PATH = "/run/opengl-driver/lib:${pkgs.lib.makeLibraryPath [
     rustup
-    lld_11
-    clang_11
+    lld_12
+    clang_12
     xorg.libxcb
     pkgconfig udev alsaLib lutris
     x11 xorg.libXcursor xorg.libXrandr xorg.libXi

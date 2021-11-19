@@ -15,7 +15,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20b228f2c198f98d4337ceb560333fb12cbb2f4948a953bf8c57d09deb219603"
 dependencies = [
  "ab_glyph_rasterizer",
- "owned_ttf_parser 0.13.2",
+ "owned_ttf_parser",
 ]
 
 [[package]]
@@ -214,23 +214,24 @@ checksum = "0d5f2f58f0aec3c50a20799792c3705e80dd7df327e79791cacec197e84e5e61"
 
 [[package]]
 name = "bevy-inspector-egui"
-version = "0.5.1"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5bc705295fc79159a6d96888ed20de42ed143da50a31b72b3060b2c5099fb024"
+checksum = "6abaea0fd1c88e0f6f90b1748f0475b0c3e330496875d3a3cfc6867003214533"
 dependencies = [
  "bevy",
  "bevy-inspector-egui-derive",
- "bevy_egui",
- "emath",
+ "bevy_egui 0.6.2",
+ "emath 0.13.0",
  "image",
  "pretty-type-name",
+ "rand",
 ]
 
 [[package]]
 name = "bevy-inspector-egui-derive"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d10a625d3c87e6662404eb21b5de6356c63a338c933436b177adbacd0edea606"
+checksum = "597c9d3f603a1fa88cfec941661e73ea18fc0010962777f3dbc5866ea3376919"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -384,13 +385,27 @@ dependencies = [
 
 [[package]]
 name = "bevy_egui"
-version = "0.4.2"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3de8da8d35ee092c04816725eb9ab9f4dc809f0c1ad2cda4de74042fa8a3454"
+checksum = "cb6d7ab5bd9077a6d2608e5fbc23f60688ba1e026c3cfe81656381863b29e7a7"
 dependencies = [
  "bevy",
  "clipboard",
- "egui",
+ "egui 0.13.1",
+ "thread_local",
+ "webbrowser",
+ "winit",
+]
+
+[[package]]
+name = "bevy_egui"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fd5d3cddaa6ed20b3107314f103750bf5adf727e525f484cb505709de14d5d7"
+dependencies = [
+ "bevy",
+ "clipboard",
+ "egui 0.14.2",
  "thread_local",
  "webbrowser",
  "winit",
@@ -1280,18 +1295,33 @@ checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
 
 [[package]]
 name = "egui"
-version = "0.11.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d7d6535c3ecdc8627a72c1c52d052d66cd9f71c238428690cc46bef9d1f2bce"
+checksum = "77f9b394ccacc0cccb30f6de7371038a116931aa3186acd908b9ec61f405f15c"
 dependencies = [
- "epaint",
+ "epaint 0.13.0",
+]
+
+[[package]]
+name = "egui"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b403f29d592b5c2267279bfdf2cd3fe3ba0e7a8738d03203a6f1536e8e9d26bd"
+dependencies = [
+ "epaint 0.14.0",
 ]
 
 [[package]]
 name = "emath"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4ed72c14666517e5c0198490864adea871081abe4f5523af8c3f4f56595142e"
+checksum = "80eea7508c08a7b4e2a041adcdca6f400d8606622c6bb980ecbbdc5f1aff9a4c"
+
+[[package]]
+name = "emath"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cca5179aa9d15128cebb79bb56dda73a79cc66b402056ff19a992e54b365e15c"
 
 [[package]]
 name = "env_logger"
@@ -1305,15 +1335,28 @@ dependencies = [
 
 [[package]]
 name = "epaint"
-version = "0.11.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a19eff631454edbe5abe4693be00be0c1ea9832d727dc385c16841caa2d0162"
+checksum = "132e30d483d9fa252fe06aa112de777d068503c379fa51bc5834204ee3258fce"
 dependencies = [
+ "ab_glyph",
  "ahash 0.7.6",
  "atomic_refcell",
- "emath",
+ "emath 0.13.0",
  "ordered-float",
- "rusttype",
+]
+
+[[package]]
+name = "epaint"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "136e7d88da926182bcfdb8217137dd347dfe5dc03b8988eaba3ef8becf83394a"
+dependencies = [
+ "ab_glyph",
+ "ahash 0.7.6",
+ "atomic_refcell",
+ "emath 0.14.0",
+ "ordered-float",
 ]
 
 [[package]]
@@ -2001,7 +2044,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy-inspector-egui",
- "bevy_egui",
+ "bevy_egui 0.7.1",
  "bincode",
  "rand",
  "serde",
@@ -2595,20 +2638,11 @@ dependencies = [
 
 [[package]]
 name = "owned_ttf_parser"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f923fb806c46266c02ab4a5b239735c144bdeda724a50ed058e5226f594cde3"
-dependencies = [
- "ttf-parser 0.6.2",
-]
-
-[[package]]
-name = "owned_ttf_parser"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65ee3f72636e6f164cc41c9f9057f4e58c4e13507699ea7f5e5242b64b8198ee"
 dependencies = [
- "ttf-parser 0.13.2",
+ "ttf-parser",
 ]
 
 [[package]]
@@ -2867,16 +2901,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "138e3e0acb6c9fb258b19b67cb8abd63c00679d2851805ea151465464fe9030a"
 dependencies = [
  "semver",
-]
-
-[[package]]
-name = "rusttype"
-version = "0.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc7c727aded0be18c5b80c1640eae0ac8e396abf6fa8477d96cb37d18ee5ec59"
-dependencies = [
- "ab_glyph_rasterizer",
- "owned_ttf_parser 0.6.0",
 ]
 
 [[package]]
@@ -3341,12 +3365,6 @@ dependencies = [
  "tracing-subscriber 0.3.1",
  "wasm-bindgen",
 ]
-
-[[package]]
-name = "ttf-parser"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e5d7cd7ab3e47dda6e56542f4bbf3824c15234958c6e1bd6aaa347e93499fdc"
 
 [[package]]
 name = "ttf-parser"
