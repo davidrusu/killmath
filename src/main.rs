@@ -106,8 +106,10 @@ fn spawn_rewrite(
                     parent
                         .spawn()
                         .insert_bundle(SpriteBundle {
-                            material: materials.rewrite_color.clone(),
-                            sprite: Sprite::new(Vec2::default()),
+                            sprite: Sprite {
+                                color: materials.rewrite_color,
+                                ..Default::default()
+                            },
                             visibility: Visibility { is_visible: false },
                             ..Default::default()
                         })
@@ -118,8 +120,10 @@ fn spawn_rewrite(
             parent
                 .spawn()
                 .insert_bundle(SpriteBundle {
-                    material: materials.surfboard_line_color.clone(),
-                    sprite: Sprite::new(Vec2::new(1.0, 1.0)),
+                    sprite: Sprite {
+                        color: materials.surfboard_line_color,
+                        ..Default::default()
+                    },
                     visibility: Visibility { is_visible: false },
                     ..Default::default()
                 })
@@ -152,7 +156,7 @@ fn spawn_rewrite(
                         .spawn()
                         .insert_bundle(SpriteBundle {
                             sprite: Sprite {
-                                color: materials.rewrite_color.colone(),
+                                color: materials.rewrite_color,
                                 ..Default::default()
                             },
                             visibility: Visibility { is_visible: false },
@@ -196,8 +200,10 @@ fn spawn_pattern(
             parent
                 .spawn()
                 .insert_bundle(SpriteBundle {
-                    material: materials.pattern_color.clone(),
-                    sprite: Sprite::new(Vec2::new(1.0, 1.0)),
+                    sprite: Sprite {
+                        color: materials.pattern_color,
+                        ..Default::default()
+                    },
                     visibility: Visibility { is_visible: false },
                     ..Default::default()
                 })
@@ -231,9 +237,9 @@ fn setup(
     commands.insert_resource(ListenerState::default());
     commands.insert_resource(Pointer::default());
     commands.insert_resource(Materials {
-        pattern_color: materials.add(Color::rgba(0.0, 0.0, 0.0, 0.3).into()),
-        rewrite_color: materials.add(Color::rgba(1.0, 0.8, 0.1, 0.1).into()),
-        surfboard_line_color: materials.add(Color::rgb(0.0, 0.0, 0.0).into()),
+        pattern_color: Color::rgba(0.0, 0.0, 0.0, 0.3),
+        rewrite_color: Color::rgba(1.0, 0.8, 0.1, 0.1),
+        surfboard_line_color: Color::rgb(0.0, 0.0, 0.0),
     });
     commands.insert_resource(ARSFont(asset_server.load("fonts/iosevka-medium.ttf")));
 }
@@ -371,12 +377,13 @@ fn ars_term_bg(
         for child in children.iter() {
             if let Ok((mut s, mut trans)) = sprites.get_mut(*child) {
                 let margin = 0.0;
-                s.size = Vec2::new(
-                    text_size.size.width + margin,
-                    text_size.size.height + margin,
-                );
                 trans.translation.x = -text_size.size.width * 0.5;
                 trans.translation.y = -text_size.size.height * 0.5;
+                trans.scale = Vec3::new(
+                    text_size.size.width + margin,
+                    text_size.size.height + margin,
+                    0.0,
+                );
             }
         }
     }
@@ -411,7 +418,7 @@ fn rewrite_layout(
             let surfboard_w = rewrite_w + 20.0;
             for child in children.iter() {
                 if let Ok((mut trans, mut sprite)) = trans_q.q2().get_mut(*child) {
-                    sprite.size = Vec2::new(surfboard_w, 1.5);
+                    trans.scale = Vec3::new(surfboard_w, 1.5, 0.0);
                     trans.translation.y = -top_h - buffer;
                     trans.translation.x = -rewrite_w * 0.5;
                 }
@@ -438,8 +445,8 @@ fn propagate_bboxes(
 ) {
     for (e, sprite) in sprites.iter() {
         if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
-            bbox.upper_right = sprite.size * 0.5 + trans.translation.truncate();
-            bbox.lower_left = -sprite.size * 0.5 + trans.translation.truncate();
+            bbox.upper_right = trans.scale.truncate() * 0.5 + trans.translation.truncate();
+            bbox.lower_left = -trans.scale.truncate() * 0.5 + trans.translation.truncate();
 
             assert!(bbox.height() >= 0.0, "{:?}", bbox);
             assert!(bbox.width() >= 0.0, "{:?}", bbox);
@@ -731,9 +738,9 @@ impl BBox {
 
 #[derive(Component)]
 struct Materials {
-    pattern_color: Handle<ColorMaterial>,
-    rewrite_color: Handle<ColorMaterial>,
-    surfboard_line_color: Handle<ColorMaterial>,
+    pattern_color: Color,
+    rewrite_color: Color,
+    surfboard_line_color: Color,
 }
 
 #[derive(Debug, Default, Clone, Component)]
@@ -1445,14 +1452,14 @@ fn attract_matching_patterns_and_rewrites(
             .iter()
             .filter(|((e, _), _)| e == &r_e)
             .map(|(_, f)| f)
-            .sum();
+            .sum::<Vec2>();
     }
     for (p_e, mut pattern_kin) in rewrites_and_patterns.q3().iter_mut() {
         pattern_kin.vel += forces
             .iter()
             .filter(|((_, e), _)| e == &p_e)
             .map(|(_, f)| f)
-            .sum();
+            .sum::<Vec2>();
     }
 }
 
