@@ -2,7 +2,7 @@
 name = "killmath"
 version = "0.1.0"
 authors = ["David Rusu <davidrusu.me@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 rand = "0.8.3"

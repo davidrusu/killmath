@@ -615,8 +615,8 @@ fn focus_system(
     {
         if let Ok((bbox, mut kin)) = terms.get_mut(holding_entity) {
             if let (Some(upper_right), Some(lower_left)) = (
-                camera.world_to_screen(&windows, &cam_trans, bbox.upper_right.extend(0.)),
-                camera.world_to_screen(&windows, &cam_trans, bbox.lower_left.extend(0.)),
+                camera.world_to_screen(&windows, cam_trans, bbox.upper_right.extend(0.)),
+                camera.world_to_screen(&windows, cam_trans, bbox.lower_left.extend(0.)),
             ) {
                 let bbox_on_screen = BBox {
                     upper_right,
@@ -780,6 +780,7 @@ impl Kinematics {
 struct Image {
     next_hole: u64,
     next_reference: u64,
+    patterns: Vec<Pattern>,
     references: BTreeMap<u64, Pattern>,
 }
 
@@ -964,9 +965,7 @@ impl Pattern {
         parent_wrapped: bool,
         expanded_refs: &mut BTreeMap<u64, usize>,
     ) -> String {
-        let indent: String = std::iter::repeat(" ".to_string())
-            .take(indent_level)
-            .collect();
+        let indent: String = " ".to_string().repeat(indent_level);
         match self {
             Self::Sym(s) => s.to_string(),
             Self::Hole(h) => format!("?{}", h),
@@ -1028,7 +1027,7 @@ impl Pattern {
         for (cyclic_hole, r) in cycle_breaks.iter() {
             let ref_pat = Pattern::Ref(*r);
             for (_, pat) in bindings.iter_mut() {
-                pat.replace_hole(&cyclic_hole, ref_pat.clone());
+                pat.replace_hole(cyclic_hole, ref_pat.clone());
             }
         }
         for (cyclic_hole, r) in cycle_breaks {
@@ -1062,7 +1061,7 @@ impl Pattern {
                     Err(())
                 } else {
                     for (a, b) in seq_a.iter().zip(seq_b.iter()) {
-                        bindings = a.unify_rec(&b, bindings, image, ref_memo)?;
+                        bindings = a.unify_rec(b, bindings, image, ref_memo)?;
                     }
                     Ok(bindings)
                 }
@@ -1362,11 +1361,10 @@ fn listener_prompt(
                 if ui.button("unpause").clicked() {
                     rewrite_timer.0.unpause()
                 }
-            } else {
-                if ui.button("pause").clicked() {
-                    rewrite_timer.0.pause()
-                }
+            } else if ui.button("pause").clicked() {
+                rewrite_timer.0.pause()
             }
+
             if ui.button("step").clicked() {
                 step_ars(commands, image, materials, font, rewrites, free_patterns);
             }
@@ -1397,25 +1395,23 @@ fn compile_input(
     font: Res<ARSFont>,
     mut listener_state: ResMut<ListenerState>,
 ) {
-    if compile_reader.iter().next().is_some() {
-        if !listener_state.command.trim().is_empty() {
-            let pattern = Pattern::parse(&listener_state.command);
-            if let Some(p_idx) = listener_state.history.iter().position(|p| p == &pattern) {
-                listener_state.history.remove(p_idx);
-            }
-            listener_state.history.push(pattern.clone());
-            println!("Parsing, new history is {:?}", listener_state.history);
-
-            spawn_pattern(
-                &image,
-                Kinematics::random().pos * 10.0,
-                &mut commands,
-                &materials,
-                &font,
-                pattern,
-            );
-            listener_state.command = Default::default();
+    if compile_reader.iter().next().is_some() && !listener_state.command.trim().is_empty() {
+        let pattern = Pattern::parse(&listener_state.command);
+        if let Some(p_idx) = listener_state.history.iter().position(|p| p == &pattern) {
+            listener_state.history.remove(p_idx);
         }
+        listener_state.history.push(pattern.clone());
+        println!("Parsing, new history is {:?}", listener_state.history);
+
+        spawn_pattern(
+            &image,
+            Kinematics::random().pos * 10.0,
+            &mut commands,
+            &materials,
+            &font,
+            pattern,
+        );
+        listener_state.command = Default::default();
     }
 }
 
@@ -1449,7 +1445,7 @@ fn attract_matching_patterns_and_rewrites(
             let delta = rewrite_kin.pos - pattern_kin.pos;
             let dist = delta.length();
             if dist > 1e-6 {
-                if rewrite.0.unify(&pattern, &mut image).is_ok() {
+                if rewrite.0.unify(pattern, &mut image).is_ok() {
                     let force_vec = delta / dist.max(1.0).powf(2.0)
                         * (force + (rewrite.0.complexity() as f32) * 10.0);
                     forces.insert((r_e, p_e), force_vec);
@@ -1484,7 +1480,7 @@ fn step_ars(
     rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
 ) {
-    let mut spent_rewrites: BTreeSet<Entity> = Default::default();
+    let spent_rewrites: BTreeSet<Entity> = Default::default();
 
     for (pattern_entity, pattern, pattern_bbox) in free_patterns.iter() {
         let mut candidate_rewrites: Vec<(Rewrite, BTreeMap<String, Pattern>, Entity)> =
@@ -1525,14 +1521,12 @@ fn step_ars(
         }
         candidate_rewrites
             .sort_by(|(r_a, _, _), (r_b, _, _)| r_a.0.complexity().cmp(&r_b.0.complexity()));
+
         if let Some((rewrite, bindings, rewrite_entity)) = candidate_rewrites.pop() {
-            println!("Pattern: {}", pattern);
-            println!("Candidates: {:?}", candidate_rewrites);
-            println!("Bindings {:?}", bindings);
-            commands.entity(pattern_entity).despawn_recursive();
-            if !rewrite.is_primitive() {
-                spent_rewrites.insert(rewrite_entity);
-            }
+            // commands.entity(pattern_entity).despawn_recursive();
+            // if !rewrite.is_primitive() {
+            //     spent_rewrites.insert(rewrite_entity);
+            // }
 
             if rewrite == rewrite_rewrite() {
                 println!("Bindings {:?}", bindings);
@@ -1569,6 +1563,7 @@ fn step_ars(
                             eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
                             Vec2::default()
                         };
+
                     spawn_pattern(
                         &image,
                         spawn_position + Vec2::new(-0.1, 0.0),
