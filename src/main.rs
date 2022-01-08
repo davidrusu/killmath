@@ -16,34 +16,29 @@ use bevy::render::camera::Camera;
 use bevy::text::Text2dSize;
 use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
-use bevy_inspector_egui::Inspectable;
 use serde::{Deserialize, Serialize};
 
 fn main() {
-    App::build()
+    App::new()
         .add_plugins(DefaultPlugins)
         .add_plugin(EguiPlugin)
-        .add_plugin(bevy_inspector_egui::WorldInspectorPlugin::new())
-        .add_startup_system(setup.system())
+        .add_startup_system(setup)
         .add_event::<CompileEvent>()
-        .add_startup_stage(
-            "ars_setup",
-            SystemStage::single(spawn_initial_state.system()),
-        )
-        .add_system(compile_input.system())
-        .add_system(listener_prompt.system())
-        .add_system(keyboard_input_system.system())
-        .add_system(attract_matching_patterns_and_rewrites.system())
-        .add_system(update_listener.system())
-        .add_system(ars.system())
-        .add_system(persistence.system())
-        .add_system(ars_layout.system())
-        .add_system(propagate_bboxes.system())
-        .add_system(ars_term_bg.system())
-        .add_system(rewrite_layout.system())
-        .add_system(print_mouse_events_system.system())
-        .add_system(focus_system.system())
-        .add_system(kinematics_system.system())
+        .add_startup_stage("ars_setup", SystemStage::single(spawn_initial_state))
+        .add_system(compile_input)
+        .add_system(listener_prompt)
+        .add_system(keyboard_input_system)
+        .add_system(attract_matching_patterns_and_rewrites)
+        .add_system(update_listener)
+        .add_system(ars)
+        .add_system(persistence)
+        .add_system(ars_layout)
+        .add_system(propagate_bboxes)
+        .add_system(ars_term_bg)
+        .add_system(rewrite_layout)
+        .add_system(print_mouse_events_system)
+        .add_system(focus_system)
+        .add_system(kinematics_system)
         .run();
 }
 
@@ -82,10 +77,7 @@ fn spawn_rewrite(
             GlobalTransform::default(),
             Transform::default(),
             BBox::default(),
-            Visible {
-                is_visible: false,
-                ..Default::default()
-            },
+            Visibility { is_visible: false },
         ))
         .with_children(|parent| {
             parent
@@ -105,10 +97,7 @@ fn spawn_rewrite(
                     ),
                     ..Default::default()
                 })
-                .insert(Visible {
-                    is_visible: false,
-                    ..Default::default()
-                })
+                .insert(Visibility { is_visible: false })
                 .insert(TextWithBG)
                 .insert(FollowParent)
                 .insert(TopPattern)
@@ -119,10 +108,7 @@ fn spawn_rewrite(
                         .insert_bundle(SpriteBundle {
                             material: materials.rewrite_color.clone(),
                             sprite: Sprite::new(Vec2::default()),
-                            visible: Visible {
-                                is_visible: false,
-                                ..Default::default()
-                            },
+                            visibility: Visibility { is_visible: false },
                             ..Default::default()
                         })
                         .insert(PatternBG)
@@ -134,10 +120,7 @@ fn spawn_rewrite(
                 .insert_bundle(SpriteBundle {
                     material: materials.surfboard_line_color.clone(),
                     sprite: Sprite::new(Vec2::new(1.0, 1.0)),
-                    visible: Visible {
-                        is_visible: false,
-                        ..Default::default()
-                    },
+                    visibility: Visibility { is_visible: false },
                     ..Default::default()
                 })
                 .insert(SurfboardLine)
@@ -168,22 +151,18 @@ fn spawn_rewrite(
                     parent
                         .spawn()
                         .insert_bundle(SpriteBundle {
-                            material: materials.rewrite_color.clone(),
-                            sprite: Sprite::new(Vec2::new(1.0, 1.0)),
-                            visible: Visible {
-                                is_visible: false,
+                            sprite: Sprite {
+                                color: materials.rewrite_color.colone(),
                                 ..Default::default()
                             },
+                            visibility: Visibility { is_visible: false },
                             ..Default::default()
                         })
                         .insert(PatternBG)
                         .insert(FollowParent)
                         .insert(BBox::default());
                 })
-                .insert(Visible {
-                    is_visible: false,
-                    ..Default::default()
-                });
+                .insert(Visibility { is_visible: false });
         });
 }
 
@@ -219,10 +198,7 @@ fn spawn_pattern(
                 .insert_bundle(SpriteBundle {
                     material: materials.pattern_color.clone(),
                     sprite: Sprite::new(Vec2::new(1.0, 1.0)),
-                    visible: Visible {
-                        is_visible: false,
-                        ..Default::default()
-                    },
+                    visibility: Visibility { is_visible: false },
                     ..Default::default()
                 })
                 .insert(PatternBG)
@@ -236,10 +212,7 @@ fn spawn_pattern(
             ..Default::default()
         })
         .insert(BBox::default())
-        .insert(Visible {
-            is_visible: false,
-            ..Default::default()
-        });
+        .insert(Visibility { is_visible: false });
 }
 
 struct ARSFont(Handle<Font>);
@@ -414,9 +387,9 @@ fn rewrite_layout(
     top_patterns: Query<&Text2dSize, With<TopPattern>>,
     bottom_patterns: Query<&Text2dSize, With<BottomPattern>>,
     mut trans_q: QuerySet<(
-        Query<&mut Transform, With<TopPattern>>,
-        Query<&mut Transform, With<BottomPattern>>,
-        Query<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
+        QueryState<&mut Transform, With<TopPattern>>,
+        QueryState<&mut Transform, With<BottomPattern>>,
+        QueryState<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
     )>,
 ) {
     for children in terms.iter() {
@@ -437,16 +410,16 @@ fn rewrite_layout(
             let buffer = 5.0;
             let surfboard_w = rewrite_w + 20.0;
             for child in children.iter() {
-                if let Ok((mut trans, mut sprite)) = trans_q.q2_mut().get_mut(*child) {
+                if let Ok((mut trans, mut sprite)) = trans_q.q2().get_mut(*child) {
                     sprite.size = Vec2::new(surfboard_w, 1.5);
                     trans.translation.y = -top_h - buffer;
                     trans.translation.x = -rewrite_w * 0.5;
                 }
-                if let Ok(mut trans) = trans_q.q1_mut().get_mut(*child) {
+                if let Ok(mut trans) = trans_q.q1().get_mut(*child) {
                     trans.translation.y = -(top_h + buffer * 2.0);
                     trans.translation.x = -(rewrite_w - bottom_w) * 0.5;
                 }
-                if let Ok(mut trans) = trans_q.q0_mut().get_mut(*child) {
+                if let Ok(mut trans) = trans_q.q0().get_mut(*child) {
                     trans.translation.x = -(rewrite_w - top_w) * 0.5;
                 }
             }
@@ -461,7 +434,7 @@ fn propagate_bboxes(
     parents: Query<(Entity, &Children), With<BBox>>,
     global_transforms: Query<&GlobalTransform, With<BBox>>,
     roots: Query<Entity, Without<Parent>>,
-    mut visibility: Query<&mut Visible>,
+    mut visibility: Query<&mut Visibility>,
 ) {
     for (e, sprite) in sprites.iter() {
         if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
@@ -663,32 +636,42 @@ fn persistence(
     println!("Saved image");
 }
 
-#[derive(Default, Debug)]
+#[derive(Component, Default, Debug)]
 struct ListenerState {
     command: String,
     history: Vec<Pattern>,
 }
 
 struct CompileEvent;
+#[derive(Component)]
 struct ARSTimer(Timer);
+#[derive(Component)]
 struct RewriteTimer(Timer);
+#[derive(Component)]
 struct PersistenceTimer(Timer);
+#[derive(Component)]
 struct ARS;
+#[derive(Component)]
 struct PatternBG;
+#[derive(Component)]
 struct SurfboardLine;
+#[derive(Component)]
 struct TopPattern;
+#[derive(Component)]
 struct BottomPattern;
+#[derive(Component)]
 struct FollowParent;
+#[derive(Component)]
 struct TextWithBG;
 
-#[derive(Default, Debug, Inspectable)]
+#[derive(Default, Debug, Component)]
 struct Pointer {
     down: bool,
     pos: Vec2,
     drag_start: Vec2,
     holding: Option<Entity>,
 }
-#[derive(Default, Debug, Inspectable)]
+#[derive(Default, Debug, Component)]
 struct BBox {
     upper_right: Vec2,
     lower_left: Vec2,
@@ -746,13 +729,14 @@ impl BBox {
     }
 }
 
+#[derive(Component)]
 struct Materials {
     pattern_color: Handle<ColorMaterial>,
     rewrite_color: Handle<ColorMaterial>,
     surfboard_line_color: Handle<ColorMaterial>,
 }
 
-#[derive(Debug, Default, Clone, Inspectable)]
+#[derive(Debug, Default, Clone, Component)]
 struct Kinematics {
     pos: Vec2,
     vel: Vec2,
@@ -776,7 +760,7 @@ impl Kinematics {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, Component)]
 struct Image {
     next_hole: u64,
     next_reference: u64,
@@ -812,7 +796,7 @@ impl Image {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Inspectable)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Component)]
 struct Rewrite(Pattern, Pattern);
 
 impl Rewrite {
@@ -831,7 +815,7 @@ impl std::fmt::Display for Rewrite {
     }
 }
 
-#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, Inspectable)]
+#[derive(PartialEq, Eq, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, Component)]
 enum Pattern {
     Sym(String),       // ==> concrete value
     Hole(String),      // ==> ?var
@@ -1326,7 +1310,7 @@ fn listener_prompt(
     );
     ctx.set_fonts(fonts);
 
-    egui::Window::new("Log Book").scroll(true).show(ctx, |ui| {
+    egui::Window::new("Log Book").vscroll(true).show(ctx, |ui| {
         for prev_pat in listener_state.history.clone().iter().rev() {
             let pprinted_pat = prev_pat.pprint(&image);
             if ui.button(&pprinted_pat).clicked() {
@@ -1429,10 +1413,10 @@ fn keyboard_input_system(
 fn attract_matching_patterns_and_rewrites(
     mut image: ResMut<Image>,
     mut rewrites_and_patterns: QuerySet<(
-        Query<(Entity, &Rewrite, &Kinematics)>,
-        Query<(Entity, &Pattern, &Kinematics)>,
-        Query<(Entity, &mut Kinematics), With<Rewrite>>,
-        Query<(Entity, &mut Kinematics), With<Pattern>>,
+        QueryState<(Entity, &Rewrite, &Kinematics)>,
+        QueryState<(Entity, &Pattern, &Kinematics)>,
+        QueryState<(Entity, &mut Kinematics), With<Rewrite>>,
+        QueryState<(Entity, &mut Kinematics), With<Pattern>>,
     )>,
 ) {
     let force = 2000.;
@@ -1456,14 +1440,14 @@ fn attract_matching_patterns_and_rewrites(
             }
         }
     }
-    for (r_e, mut rewrite_kin) in rewrites_and_patterns.q2_mut().iter_mut() {
+    for (r_e, mut rewrite_kin) in rewrites_and_patterns.q2().iter_mut() {
         rewrite_kin.vel -= forces
             .iter()
             .filter(|((e, _), _)| e == &r_e)
             .map(|(_, f)| f)
             .sum();
     }
-    for (p_e, mut pattern_kin) in rewrites_and_patterns.q3_mut().iter_mut() {
+    for (p_e, mut pattern_kin) in rewrites_and_patterns.q3().iter_mut() {
         pattern_kin.vel += forces
             .iter()
             .filter(|((_, e), _)| e == &p_e)
