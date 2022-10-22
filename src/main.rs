@@ -1,27 +1,29 @@
 #![feature(iter_intersperse)]
 #![feature(if_let_guard)]
-#![feature(map_first_last)]
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::BufReader;
 
+use bevy::input::ButtonState;
 use bevy::input::{
     keyboard::KeyCode,
     mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel},
-    ElementState, Input,
+    Input,
 };
 use bevy::prelude::*;
 use bevy::render::camera::Camera;
 use bevy::text::Text2dSize;
 use bevy::window::CursorMoved;
 use bevy_egui::{egui, EguiContext, EguiPlugin};
+use bevy_inspector_egui::{Inspectable, WorldInspectorPlugin};
 use serde::{Deserialize, Serialize};
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugin(EguiPlugin)
+        .add_plugin(WorldInspectorPlugin::new())
+        // .add_plugin(EguiPlugin)
         .add_startup_system(setup)
         .add_event::<CompileEvent>()
         .add_startup_stage("ars_setup", SystemStage::single(spawn_initial_state))
@@ -64,9 +66,9 @@ fn spawn_rewrite(
     font: &ARSFont,
     rewrite: Rewrite,
 ) {
-    println!("Spawning rewrite: {}", rewrite);
     commands
         .spawn()
+        .insert_bundle(SpatialBundle::default())
         .insert_bundle((
             ARS,
             rewrite.clone(),
@@ -74,30 +76,27 @@ fn spawn_rewrite(
                 pos,
                 ..Default::default()
             },
-            GlobalTransform::default(),
-            Transform::default(),
             BBox::default(),
-            Visibility { is_visible: false },
+            Force(Vec2::ZERO),
         ))
         .with_children(|parent| {
             parent
                 .spawn()
                 .insert_bundle(Text2dBundle {
-                    text: Text::with_section(
+                    text: Text::from_section(
                         rewrite.0.pprint(image),
                         TextStyle {
                             font: font.0.clone(),
                             font_size: 24.0,
                             color: Color::WHITE,
                         },
-                        TextAlignment {
-                            vertical: VerticalAlign::Bottom,
-                            horizontal: HorizontalAlign::Left,
-                        },
-                    ),
+                    )
+                    .with_alignment(TextAlignment {
+                        vertical: VerticalAlign::Top,
+                        horizontal: HorizontalAlign::Right,
+                    }),
                     ..Default::default()
                 })
-                .insert(Visibility { is_visible: false })
                 .insert(TextWithBG)
                 .insert(FollowParent)
                 .insert(TopPattern)
@@ -110,7 +109,6 @@ fn spawn_rewrite(
                                 color: materials.rewrite_color,
                                 ..Default::default()
                             },
-                            visibility: Visibility { is_visible: false },
                             ..Default::default()
                         })
                         .insert(PatternBG)
@@ -124,7 +122,6 @@ fn spawn_rewrite(
                         color: materials.surfboard_line_color,
                         ..Default::default()
                     },
-                    visibility: Visibility { is_visible: false },
                     ..Default::default()
                 })
                 .insert(SurfboardLine)
@@ -133,18 +130,18 @@ fn spawn_rewrite(
             parent
                 .spawn()
                 .insert_bundle(Text2dBundle {
-                    text: Text::with_section(
+                    text: Text::from_section(
                         rewrite.1.pprint(image),
                         TextStyle {
                             font: font.0.clone(),
                             font_size: 24.0,
                             color: Color::WHITE,
                         },
-                        TextAlignment {
-                            vertical: VerticalAlign::Bottom,
-                            horizontal: HorizontalAlign::Left,
-                        },
-                    ),
+                    )
+                    .with_alignment(TextAlignment {
+                        vertical: VerticalAlign::Top,
+                        horizontal: HorizontalAlign::Right,
+                    }),
                     ..Default::default()
                 })
                 .insert(TextWithBG)
@@ -159,14 +156,12 @@ fn spawn_rewrite(
                                 color: materials.rewrite_color,
                                 ..Default::default()
                             },
-                            visibility: Visibility { is_visible: false },
                             ..Default::default()
                         })
                         .insert(PatternBG)
                         .insert(FollowParent)
                         .insert(BBox::default());
-                })
-                .insert(Visibility { is_visible: false });
+                });
         });
 }
 
@@ -178,22 +173,22 @@ fn spawn_pattern(
     font: &ARSFont,
     pattern: Pattern,
 ) {
-    println!("Spawning pattern: {}", pattern);
     commands
         .spawn()
+        .insert_bundle(SpatialBundle::default())
         .insert_bundle(Text2dBundle {
-            text: Text::with_section(
+            text: Text::from_section(
                 pattern.pprint(image),
                 TextStyle {
                     font: font.0.clone(),
                     font_size: 24.0,
                     color: Color::WHITE,
                 },
-                TextAlignment {
-                    vertical: VerticalAlign::Bottom,
-                    horizontal: HorizontalAlign::Left,
-                },
-            ),
+            )
+            .with_alignment(TextAlignment {
+                vertical: VerticalAlign::Top,
+                horizontal: HorizontalAlign::Right,
+            }),
             ..Default::default()
         })
         .with_children(|parent| {
@@ -204,7 +199,6 @@ fn spawn_pattern(
                         color: materials.pattern_color,
                         ..Default::default()
                     },
-                    visibility: Visibility { is_visible: false },
                     ..Default::default()
                 })
                 .insert(PatternBG)
@@ -218,21 +212,22 @@ fn spawn_pattern(
             ..Default::default()
         })
         .insert(BBox::default())
-        .insert(Visibility { is_visible: false });
+        .insert(Force(Vec2::ZERO));
 }
 
 struct ARSFont(Handle<Font>);
+
 fn setup(
     mut commands: Commands,
     mut materials: ResMut<Assets<ColorMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    commands
-        .spawn()
-        .insert_bundle(OrthographicCameraBundle::new_2d());
+    commands.spawn().insert_bundle(Camera2dBundle::default());
     commands.insert_resource(Image::default());
     commands.insert_resource(ARSTimer(Timer::from_seconds(0.01, true)));
-    commands.insert_resource(RewriteTimer(Timer::from_seconds(0.1, true)));
+    let mut rewrite_timer = Timer::from_seconds(0.1, true);
+    rewrite_timer.pause();
+    commands.insert_resource(RewriteTimer(rewrite_timer));
     commands.insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)));
     commands.insert_resource(ListenerState::default());
     commands.insert_resource(Pointer::default());
@@ -352,19 +347,27 @@ fn kinematics_system(
     time: Res<Time>,
     mut timer: ResMut<ARSTimer>,
     mut kinematics: Query<(Entity, &mut Kinematics)>,
+    mut forces: Query<(Entity, &mut Force)>,
     mut positions: Query<(&BBox, &mut GlobalTransform)>,
 ) {
     if !timer.0.tick(time.delta()).just_finished() {
         return;
     }
+
+    for (e, mut f) in forces.iter_mut() {
+        let (_, mut k) = kinematics.get_mut(e).unwrap();
+        k.vel += f.0;
+        f.0 = Vec2::ZERO;
+    }
+
     for (e, mut k) in kinematics.iter_mut() {
         k.vel *= 0.9;
         k.pos = k.pos + k.vel * time.delta_seconds();
         k.vel = k.vel - k.pos * 0.001;
 
         if let Ok((bbox, mut transform)) = positions.get_mut(e) {
-            transform.translation.x = k.pos.x + bbox.width() * 0.5;
-            transform.translation.y = k.pos.y + bbox.height() * 0.5;
+            transform.translation_mut().x = k.pos.x + bbox.width() * 0.5;
+            transform.translation_mut().y = k.pos.y + bbox.height() * 0.5;
         }
     }
 }
@@ -377,13 +380,9 @@ fn ars_term_bg(
         for child in children.iter() {
             if let Ok((mut s, mut trans)) = sprites.get_mut(*child) {
                 let margin = 0.0;
-                trans.translation.x = -text_size.size.width * 0.5;
-                trans.translation.y = -text_size.size.height * 0.5;
-                trans.scale = Vec3::new(
-                    text_size.size.width + margin,
-                    text_size.size.height + margin,
-                    0.0,
-                );
+                trans.translation.x = -text_size.size.x * 0.5;
+                trans.translation.y = -text_size.size.y * 0.5;
+                trans.scale = Vec3::new(text_size.size.x + margin, text_size.size.y + margin, 0.0);
             }
         }
     }
@@ -393,10 +392,10 @@ fn rewrite_layout(
     terms: Query<&Children, With<Rewrite>>,
     top_patterns: Query<&Text2dSize, With<TopPattern>>,
     bottom_patterns: Query<&Text2dSize, With<BottomPattern>>,
-    mut trans_q: QuerySet<(
-        QueryState<&mut Transform, With<TopPattern>>,
-        QueryState<&mut Transform, With<BottomPattern>>,
-        QueryState<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
+    mut trans_q: ParamSet<(
+        Query<&mut Transform, With<TopPattern>>,
+        Query<&mut Transform, With<BottomPattern>>,
+        Query<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
     )>,
 ) {
     for children in terms.iter() {
@@ -405,11 +404,11 @@ fn rewrite_layout(
         let mut bottom_width = None;
         for child in children.iter() {
             if let Ok(text_size) = top_patterns.get(*child) {
-                top_height = Some(text_size.size.height);
-                top_width = Some(text_size.size.width);
+                top_height = Some(text_size.size.y);
+                top_width = Some(text_size.size.x);
             }
             if let Ok(text_size) = bottom_patterns.get(*child) {
-                bottom_width = Some(text_size.size.width);
+                bottom_width = Some(text_size.size.x);
             }
         }
         if let (Some(top_h), Some(top_w), Some(bottom_w)) = (top_height, top_width, bottom_width) {
@@ -417,16 +416,16 @@ fn rewrite_layout(
             let buffer = 5.0;
             let surfboard_w = rewrite_w + 20.0;
             for child in children.iter() {
-                if let Ok((mut trans, mut sprite)) = trans_q.q2().get_mut(*child) {
+                if let Ok((mut trans, mut sprite)) = trans_q.p2().get_mut(*child) {
                     trans.scale = Vec3::new(surfboard_w, 1.5, 0.0);
                     trans.translation.y = -top_h - buffer;
                     trans.translation.x = -rewrite_w * 0.5;
                 }
-                if let Ok(mut trans) = trans_q.q1().get_mut(*child) {
+                if let Ok(mut trans) = trans_q.p1().get_mut(*child) {
                     trans.translation.y = -(top_h + buffer * 2.0);
                     trans.translation.x = -(rewrite_w - bottom_w) * 0.5;
                 }
-                if let Ok(mut trans) = trans_q.q0().get_mut(*child) {
+                if let Ok(mut trans) = trans_q.p0().get_mut(*child) {
                     trans.translation.x = -(rewrite_w - top_w) * 0.5;
                 }
             }
@@ -441,19 +440,13 @@ fn propagate_bboxes(
     parents: Query<(Entity, &Children), With<BBox>>,
     global_transforms: Query<&GlobalTransform, With<BBox>>,
     roots: Query<Entity, Without<Parent>>,
-    mut visibility: Query<&mut Visibility>,
 ) {
     for (e, sprite) in sprites.iter() {
         if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
             bbox.upper_right = trans.scale.truncate() * 0.5 + trans.translation.truncate();
             bbox.lower_left = -trans.scale.truncate() * 0.5 + trans.translation.truncate();
-
             assert!(bbox.height() >= 0.0, "{:?}", bbox);
             assert!(bbox.width() >= 0.0, "{:?}", bbox);
-        }
-
-        if let Ok(mut v) = visibility.get_mut(e) {
-            v.is_visible = true;
         }
     }
 
@@ -477,7 +470,7 @@ fn propagate_bboxes(
                 .map(|t| *t)
                 .ok()
                 .unwrap_or_default()
-                .translation
+                .translation_mut()
                 .truncate()
         } else {
             transforms
@@ -488,7 +481,6 @@ fn propagate_bboxes(
                 .translation
                 .truncate()
         };
-
         if global_translation.x.is_nan() || global_translation.y.is_nan() {
             global_translation = Default::default();
         }
@@ -500,10 +492,6 @@ fn propagate_bboxes(
             bbox.lower_left = parent_bbox.lower_left + global_translation;
             assert!(bbox.height() >= 0.0, "{:?}", bbox);
             assert!(bbox.width() >= 0.0, "{:?}", bbox);
-        }
-
-        if let Ok(mut v) = visibility.get_mut(parent) {
-            v.is_visible = true;
         }
     }
 }
@@ -525,7 +513,7 @@ fn print_mouse_events_system(
                 state,
             } => {
                 pointer.drag_start = pointer.pos;
-                pointer.down = state == &ElementState::Pressed;
+                pointer.down = state == &ButtonState::Pressed;
             }
             event => println!("{:?}", event),
         }
@@ -538,21 +526,15 @@ fn print_mouse_events_system(
     }
 
     for event in mouse_wheel_events.iter() {
-        println!("{:?}", event);
         match event {
             MouseWheel {
-                unit: MouseScrollUnit::Pixel,
-                ..
-            } => (),
-            MouseWheel {
-                // unit: MouseScrollUnit::Line,
-                // y,
-                ..
+                unit: MouseScrollUnit::Line | MouseScrollUnit::Pixel,
+                x,
+                y,
             } => {
-                if let Some((_, mut _cam_trans)) = camera_query.iter_mut().next() {
-                    // cam_trans.scale.x += y * 0.1;
-                    // cam_trans.scale.y += y * 0.1;
-                    // cam_trans.scale.z += y * 0.1;
+                if let Some((_, mut cam_trans)) = camera_query.iter_mut().next() {
+                    cam_trans.translation_mut().x += x;
+                    cam_trans.translation_mut().y += y;
                 }
             }
         }
@@ -565,8 +547,8 @@ fn print_mouse_events_system(
         if pointer.down && pointer.holding.is_none() {
             for (entity, bbox) in holdable_entities.iter() {
                 if let (Some(upper_right), Some(lower_left)) = (
-                    camera.world_to_screen(&windows, &cam_trans, bbox.upper_right.extend(0.)),
-                    camera.world_to_screen(&windows, &cam_trans, bbox.lower_left.extend(0.)),
+                    camera.world_to_viewport(&cam_trans, bbox.upper_right.extend(0.)),
+                    camera.world_to_viewport(&cam_trans, bbox.lower_left.extend(0.)),
                 ) {
                     let bbox_on_screen = BBox {
                         upper_right,
@@ -575,7 +557,6 @@ fn print_mouse_events_system(
 
                     if bbox_on_screen.contains(pointer.pos) {
                         pointer.holding = Some(entity);
-                        println!("Holding {:?}", entity);
                         break;
                     }
                 }
@@ -595,8 +576,8 @@ fn focus_system(
     {
         if let Ok((bbox, mut kin)) = terms.get_mut(holding_entity) {
             if let (Some(upper_right), Some(lower_left)) = (
-                camera.world_to_screen(&windows, cam_trans, bbox.upper_right.extend(0.)),
-                camera.world_to_screen(&windows, cam_trans, bbox.lower_left.extend(0.)),
+                camera.world_to_viewport(cam_trans, bbox.upper_right.extend(0.)),
+                camera.world_to_viewport(cam_trans, bbox.lower_left.extend(0.)),
             ) {
                 let bbox_on_screen = BBox {
                     upper_right,
@@ -748,6 +729,9 @@ struct Kinematics {
     pos: Vec2,
     vel: Vec2,
 }
+
+#[derive(Debug, Default, Clone, Copy, Component)]
+struct Force(Vec2);
 
 impl Kinematics {
     fn random() -> Self {
@@ -1307,15 +1291,16 @@ fn listener_prompt(
     rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
     mut listener_state: ResMut<ListenerState>,
-    egui_context: ResMut<EguiContext>,
+    mut egui_context: ResMut<EguiContext>,
 ) {
-    let ctx = &mut egui_context.ctx();
+    let ctx = egui_context.ctx_mut();
     let mut fonts = egui::FontDefinitions::default();
-    fonts.family_and_size.insert(
-        egui::TextStyle::Monospace,
-        (egui::FontFamily::Monospace, 24.0),
-    );
-    ctx.set_fonts(fonts);
+    // fonts.family_and_size.insert(
+    //     egui::TextStyle::Monospace,
+    //     (egui::FontFamily::Monospace, 24.0),
+    // );
+    // fonts.
+    // ctx.set_fonts(fonts);
 
     egui::Window::new("Log Book").vscroll(true).show(ctx, |ui| {
         for prev_pat in listener_state.history.clone().iter().rev() {
@@ -1327,8 +1312,7 @@ fn listener_prompt(
     });
     egui::Window::new("Listener").show(ctx, |ui| {
         ui.add(
-            egui::TextEdit::multiline(&mut listener_state.command)
-                .text_style(egui::TextStyle::Monospace),
+            egui::TextEdit::multiline(&mut listener_state.command).font(egui::TextStyle::Monospace),
         );
         ui.horizontal(|ui| {
             if ui.button("compile").clicked() && !listener_state.command.is_empty() {
@@ -1392,7 +1376,6 @@ fn compile_input(
             listener_state.history.remove(p_idx);
         }
         listener_state.history.push(pattern.clone());
-        println!("Parsing, new history is {:?}", listener_state.history);
 
         spawn_pattern(
             &image,
@@ -1419,47 +1402,33 @@ fn keyboard_input_system(
 
 fn attract_matching_patterns_and_rewrites(
     mut image: ResMut<Image>,
-    mut rewrites_and_patterns: QuerySet<(
-        QueryState<(Entity, &Rewrite, &Kinematics)>,
-        QueryState<(Entity, &Pattern, &Kinematics)>,
-        QueryState<(Entity, &mut Kinematics), With<Rewrite>>,
-        QueryState<(Entity, &mut Kinematics), With<Pattern>>,
-    )>,
+    rewrites: Query<(Entity, &Rewrite, &Kinematics)>,
+    patterns: Query<(Entity, &Pattern, &Kinematics)>,
+    mut forces: Query<(Entity, &mut Force)>,
 ) {
     let force = 2000.;
-    let mut forces: BTreeMap<(Entity, Entity), Vec2> = Default::default();
-    for (r_e, rewrite, rewrite_kin) in rewrites_and_patterns.q0().iter() {
+    for (r_e, rewrite, rewrite_kin) in rewrites.iter() {
         if rewrite.is_primitive() {
             continue;
         }
-        for (p_e, pattern, pattern_kin) in rewrites_and_patterns.q1().iter() {
+        for (p_e, pattern, pattern_kin) in patterns.iter() {
             let delta = rewrite_kin.pos - pattern_kin.pos;
             let dist = delta.length();
             if dist > 1e-6 {
-                if rewrite.0.unify(pattern, &mut image).is_ok() {
-                    let force_vec = delta / dist.max(1.0).powf(2.0)
-                        * (force + (rewrite.0.complexity() as f32) * 10.0);
-                    forces.insert((r_e, p_e), force_vec);
+                let force_vec = if rewrite.0.unify(pattern, &mut image).is_ok() {
+                    delta / dist.max(1.0).powf(2.0)
+                        * (force + (rewrite.0.complexity() as f32) * 10.0)
                 } else if dist < 400. {
-                    let force_vec = -delta / (dist + 1.5).powf(2.0) * 1000.;
-                    forces.insert((r_e, p_e), force_vec);
-                }
+                    -delta / (dist + 1.5).powf(2.0) * 1000.
+                } else {
+                    Default::default()
+                };
+                let (_, mut f) = forces.get_mut(r_e).unwrap();
+                f.0 -= force_vec;
+                let (_, mut f) = forces.get_mut(p_e).unwrap();
+                f.0 += force_vec;
             }
         }
-    }
-    for (r_e, mut rewrite_kin) in rewrites_and_patterns.q2().iter_mut() {
-        rewrite_kin.vel -= forces
-            .iter()
-            .filter(|((e, _), _)| e == &r_e)
-            .map(|(_, f)| f)
-            .sum::<Vec2>();
-    }
-    for (p_e, mut pattern_kin) in rewrites_and_patterns.q3().iter_mut() {
-        pattern_kin.vel += forces
-            .iter()
-            .filter(|((_, e), _)| e == &p_e)
-            .map(|(_, f)| f)
-            .sum::<Vec2>();
     }
 }
 
@@ -1471,7 +1440,7 @@ fn step_ars(
     rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
     free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
 ) {
-    let spent_rewrites: BTreeSet<Entity> = Default::default();
+    let mut spent_rewrites: BTreeSet<Entity> = Default::default();
 
     for (pattern_entity, pattern, pattern_bbox) in free_patterns.iter() {
         let mut candidate_rewrites: Vec<(Rewrite, BTreeMap<String, Pattern>, Entity)> =
@@ -1514,14 +1483,12 @@ fn step_ars(
             .sort_by(|(r_a, _, _), (r_b, _, _)| r_a.0.complexity().cmp(&r_b.0.complexity()));
 
         if let Some((rewrite, bindings, rewrite_entity)) = candidate_rewrites.pop() {
-            // commands.entity(pattern_entity).despawn_recursive();
-            // if !rewrite.is_primitive() {
-            //     spent_rewrites.insert(rewrite_entity);
-            // }
+            commands.entity(pattern_entity).despawn_recursive();
+            if !rewrite.is_primitive() {
+                spent_rewrites.insert(rewrite_entity);
+            }
 
             if rewrite == rewrite_rewrite() {
-                println!("Bindings {:?}", bindings);
-
                 if let (Some(pattern), Some(rewrite)) = (
                     bindings.get("pattern").cloned(),
                     bindings.get("rewrite").cloned(),
@@ -1771,8 +1738,6 @@ mod tests {
         let mut unified = Pattern::parse("[?x [?z ?x]]");
         unified.replace_holes(unified_bindings);
 
-        println!("Unified: {}", unified);
-
         assert_eq!(
             unified,
             vec![Pattern::Ref(0), vec!["?z".into(), Pattern::Ref(0)].into()].into()
@@ -1798,8 +1763,6 @@ mod tests {
             image.deref(0),
             Some(&vec!["?z".into(), Pattern::Ref(0)].into())
         );
-
-        println!("Unified: {}", unified);
 
         assert_eq!(
             unified.unify(&"[[1 ?b] ?b]".into(), &mut image),
