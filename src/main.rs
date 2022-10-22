@@ -15,8 +15,8 @@ use bevy::prelude::*;
 use bevy::render::camera::Camera;
 use bevy::text::Text2dSize;
 use bevy::window::CursorMoved;
-use bevy_egui::{egui, EguiContext, EguiPlugin};
-use bevy_inspector_egui::{Inspectable, WorldInspectorPlugin};
+use bevy_egui::{egui, EguiContext};
+use bevy_inspector_egui::WorldInspectorPlugin;
 use serde::{Deserialize, Serialize};
 
 fn main() {
@@ -70,7 +70,7 @@ fn spawn_rewrite(
         .spawn()
         .insert_bundle(SpatialBundle::default())
         .insert_bundle((
-            ARS,
+            Ars,
             rewrite.clone(),
             Kinematics {
                 pos,
@@ -93,7 +93,7 @@ fn spawn_rewrite(
                     )
                     .with_alignment(TextAlignment {
                         vertical: VerticalAlign::Top,
-                        horizontal: HorizontalAlign::Right,
+                        horizontal: HorizontalAlign::Left,
                     }),
                     ..Default::default()
                 })
@@ -140,7 +140,7 @@ fn spawn_rewrite(
                     )
                     .with_alignment(TextAlignment {
                         vertical: VerticalAlign::Top,
-                        horizontal: HorizontalAlign::Right,
+                        horizontal: HorizontalAlign::Left,
                     }),
                     ..Default::default()
                 })
@@ -187,7 +187,7 @@ fn spawn_pattern(
             )
             .with_alignment(TextAlignment {
                 vertical: VerticalAlign::Top,
-                horizontal: HorizontalAlign::Right,
+                horizontal: HorizontalAlign::Left,
             }),
             ..Default::default()
         })
@@ -205,7 +205,7 @@ fn spawn_pattern(
                 .insert(BBox::default());
         })
         .insert(TextWithBG)
-        .insert(ARS)
+        .insert(Ars)
         .insert(pattern)
         .insert(Kinematics {
             pos,
@@ -217,15 +217,11 @@ fn spawn_pattern(
 
 struct ARSFont(Handle<Font>);
 
-fn setup(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    asset_server: Res<AssetServer>,
-) {
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn().insert_bundle(Camera2dBundle::default());
     commands.insert_resource(Image::default());
-    commands.insert_resource(ARSTimer(Timer::from_seconds(0.01, true)));
-    let mut rewrite_timer = Timer::from_seconds(0.1, true);
+    commands.insert_resource(ARSTimer(Timer::from_seconds(0.02, true)));
+    let mut rewrite_timer = Timer::from_seconds(0.5, true);
     rewrite_timer.pause();
     commands.insert_resource(RewriteTimer(rewrite_timer));
     commands.insert_resource(PersistenceTimer(Timer::from_seconds(5.0, true)));
@@ -293,9 +289,9 @@ fn spawn_initial_state(
 }
 
 fn ars_layout(
-    timer: ResMut<ARSTimer>,
-    bboxes: Query<(Entity, &BBox), With<ARS>>,
-    mut kinematics: Query<&mut Kinematics, With<ARS>>,
+    timer: Res<ARSTimer>,
+    bboxes: Query<(Entity, &BBox), With<Ars>>,
+    mut kinematics: Query<&mut Kinematics, With<Ars>>,
 ) {
     if !timer.0.just_finished() {
         return;
@@ -309,9 +305,9 @@ fn ars_layout(
                 continue;
             }
 
-            let buffer = 5.0;
-            let bbox_1 = bbox_1.buffer(buffer);
-            let bbox_2 = bbox_2.buffer(buffer);
+            // let buffer = 5.0;
+            // let bbox_1 = bbox_1.buffer(buffer);
+            // let bbox_2 = bbox_2.buffer(buffer);
 
             let delta = bbox_2.center() - bbox_1.center();
 
@@ -331,7 +327,8 @@ fn ars_layout(
             let push_vec = push_vecs
                 .into_iter()
                 .min_by(|a, b| a.length().partial_cmp(&b.length()).unwrap())
-                .unwrap();
+                .unwrap()
+                * 0.5;
 
             if let Ok(mut e_kin) = kinematics.get_mut(e_1) {
                 e_kin.vel += push_vec + Kinematics::random().vel * 0.1;
@@ -363,7 +360,6 @@ fn kinematics_system(
     for (e, mut k) in kinematics.iter_mut() {
         k.vel *= 0.9;
         k.pos = k.pos + k.vel * time.delta_seconds();
-        k.vel = k.vel - k.pos * 0.001;
 
         if let Ok((bbox, mut transform)) = positions.get_mut(e) {
             transform.translation_mut().x = k.pos.x + bbox.width() * 0.5;
@@ -373,14 +369,19 @@ fn kinematics_system(
 }
 
 fn ars_term_bg(
+    timer: Res<ARSTimer>,
     text_size_q: Query<(&Text2dSize, &Children), With<TextWithBG>>,
-    mut sprites: Query<(&mut Sprite, &mut Transform), With<PatternBG>>,
+    mut sprites: Query<&mut Transform, With<PatternBG>>,
 ) {
+    if !timer.0.just_finished() {
+        return;
+    }
+
     for (text_size, children) in text_size_q.iter() {
         for child in children.iter() {
-            if let Ok((mut s, mut trans)) = sprites.get_mut(*child) {
+            if let Ok(mut trans) = sprites.get_mut(*child) {
                 let margin = 0.0;
-                trans.translation.x = -text_size.size.x * 0.5;
+                trans.translation.x = text_size.size.x * 0.5;
                 trans.translation.y = -text_size.size.y * 0.5;
                 trans.scale = Vec3::new(text_size.size.x + margin, text_size.size.y + margin, 0.0);
             }
@@ -389,15 +390,20 @@ fn ars_term_bg(
 }
 
 fn rewrite_layout(
+    timer: Res<ARSTimer>,
     terms: Query<&Children, With<Rewrite>>,
     top_patterns: Query<&Text2dSize, With<TopPattern>>,
     bottom_patterns: Query<&Text2dSize, With<BottomPattern>>,
     mut trans_q: ParamSet<(
         Query<&mut Transform, With<TopPattern>>,
         Query<&mut Transform, With<BottomPattern>>,
-        Query<(&mut Transform, &mut Sprite), With<SurfboardLine>>,
+        Query<&mut Transform, With<SurfboardLine>>,
     )>,
 ) {
+    if !timer.0.just_finished() {
+        return;
+    }
+
     for children in terms.iter() {
         let mut top_height = None;
         let mut top_width = None;
@@ -416,17 +422,17 @@ fn rewrite_layout(
             let buffer = 5.0;
             let surfboard_w = rewrite_w + 20.0;
             for child in children.iter() {
-                if let Ok((mut trans, mut sprite)) = trans_q.p2().get_mut(*child) {
+                if let Ok(mut trans) = trans_q.p2().get_mut(*child) {
                     trans.scale = Vec3::new(surfboard_w, 1.5, 0.0);
                     trans.translation.y = -top_h - buffer;
-                    trans.translation.x = -rewrite_w * 0.5;
+                    trans.translation.x = rewrite_w * 0.5;
                 }
                 if let Ok(mut trans) = trans_q.p1().get_mut(*child) {
                     trans.translation.y = -(top_h + buffer * 2.0);
-                    trans.translation.x = -(rewrite_w - bottom_w) * 0.5;
+                    trans.translation.x = (rewrite_w - bottom_w) * 0.5;
                 }
                 if let Ok(mut trans) = trans_q.p0().get_mut(*child) {
-                    trans.translation.x = -(rewrite_w - top_w) * 0.5;
+                    trans.translation.x = (rewrite_w - top_w) * 0.5;
                 }
             }
         }
@@ -434,14 +440,18 @@ fn rewrite_layout(
 }
 
 fn propagate_bboxes(
+    timer: Res<ARSTimer>,
     mut bboxes: Query<&mut BBox>,
-    sprites: Query<(Entity, &Sprite), With<BBox>>,
+    entities: Query<Entity, With<BBox>>,
     transforms: Query<&Transform, With<BBox>>,
     parents: Query<(Entity, &Children), With<BBox>>,
     global_transforms: Query<&GlobalTransform, With<BBox>>,
     roots: Query<Entity, Without<Parent>>,
 ) {
-    for (e, sprite) in sprites.iter() {
+    if !timer.0.just_finished() {
+        return;
+    }
+    for e in entities.iter() {
         if let (Ok(mut bbox), Ok(trans)) = (bboxes.get_mut(e), transforms.get(e)) {
             bbox.upper_right = trans.scale.truncate() * 0.5 + trans.translation.truncate();
             bbox.lower_left = -trans.scale.truncate() * 0.5 + trans.translation.truncate();
@@ -497,14 +507,13 @@ fn propagate_bboxes(
 }
 
 fn print_mouse_events_system(
-    windows: Res<Windows>,
     mut pointer: ResMut<Pointer>,
     mut camera_query: Query<(&Camera, &mut GlobalTransform)>,
     mut mouse_button_input_events: EventReader<MouseButtonInput>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut cursor_moved_events: EventReader<CursorMoved>,
     mut mouse_wheel_events: EventReader<MouseWheel>,
-    holdable_entities: Query<(Entity, &BBox), With<ARS>>,
+    holdable_entities: Query<(Entity, &BBox), With<Ars>>,
 ) {
     for event in mouse_button_input_events.iter() {
         match event {
@@ -566,11 +575,15 @@ fn print_mouse_events_system(
 }
 
 fn focus_system(
-    windows: Res<Windows>,
+    timer: Res<ARSTimer>,
     pointer: Res<Pointer>,
-    mut terms: Query<(&BBox, &mut Kinematics), With<ARS>>,
+    mut terms: Query<(&BBox, &mut Kinematics), With<Ars>>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
 ) {
+    if !timer.0.just_finished() {
+        return;
+    }
+
     if let (Some((camera, cam_trans)), Some(holding_entity)) =
         (camera_query.iter().next(), pointer.holding)
     {
@@ -594,8 +607,8 @@ fn persistence(
     time: Res<Time>,
     mut timer: ResMut<PersistenceTimer>,
     image: Res<Image>,
-    rewrites: Query<&Rewrite, With<ARS>>,
-    free_patterns: Query<&Pattern, With<ARS>>,
+    rewrites: Query<&Rewrite, With<Ars>>,
+    free_patterns: Query<&Pattern, With<Ars>>,
 ) {
     if !timer.0.tick(time.delta()).just_finished() {
         return;
@@ -638,7 +651,7 @@ struct RewriteTimer(Timer);
 #[derive(Component)]
 struct PersistenceTimer(Timer);
 #[derive(Component)]
-struct ARS;
+struct Ars;
 #[derive(Component)]
 struct PatternBG;
 #[derive(Component)]
@@ -700,6 +713,10 @@ impl BBox {
 
     fn left(&self) -> Vec2 {
         self.center() + Vec2::new(-self.width() * 0.5, 0.0)
+    }
+
+    fn double_left(&self) -> Vec2 {
+        self.center() + Vec2::new(-self.width() * 0.5, 0.0) * 2.0
     }
 
     fn contains(&self, p: Vec2) -> bool {
@@ -961,7 +978,7 @@ impl Pattern {
                         pprint,
                         pat.pprint_indented(
                             image,
-                            indent_level + (if wrapped { 1 } else { 0 }),
+                            indent_level + usize::from(wrapped),
                             wrapped,
                             &mut expanded_refs.clone()
                         )
@@ -1288,8 +1305,8 @@ fn listener_prompt(
     image: ResMut<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
-    rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
-    free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite, &BBox), With<Ars>>,
+    free_patterns: Query<(Entity, &Pattern, &BBox), With<Ars>>,
     mut listener_state: ResMut<ListenerState>,
     mut egui_context: ResMut<EguiContext>,
 ) {
@@ -1312,7 +1329,10 @@ fn listener_prompt(
     });
     egui::Window::new("Listener").show(ctx, |ui| {
         ui.add(
-            egui::TextEdit::multiline(&mut listener_state.command).font(egui::TextStyle::Monospace),
+            egui::TextEdit::multiline(&mut listener_state.command).font(egui::FontId {
+                size: 24.,
+                family: egui::FontFamily::Monospace,
+            }),
         );
         ui.horizontal(|ui| {
             if ui.button("compile").clicked() && !listener_state.command.is_empty() {
@@ -1369,6 +1389,7 @@ fn compile_input(
     materials: Res<Materials>,
     font: Res<ARSFont>,
     mut listener_state: ResMut<ListenerState>,
+    camera: Query<&GlobalTransform, With<Camera>>,
 ) {
     if compile_reader.iter().next().is_some() && !listener_state.command.trim().is_empty() {
         let pattern = Pattern::parse(&listener_state.command);
@@ -1377,9 +1398,16 @@ fn compile_input(
         }
         listener_state.history.push(pattern.clone());
 
+        let camera_pos = camera
+            .iter()
+            .next()
+            .map(|gt| gt.translation())
+            .unwrap_or_default()
+            .truncate();
+
         spawn_pattern(
             &image,
-            Kinematics::random().pos * 10.0,
+            Kinematics::random().pos * 10.0 + camera_pos,
             &mut commands,
             &materials,
             &font,
@@ -1402,10 +1430,15 @@ fn keyboard_input_system(
 
 fn attract_matching_patterns_and_rewrites(
     mut image: ResMut<Image>,
+    timer: Res<ARSTimer>,
     rewrites: Query<(Entity, &Rewrite, &Kinematics)>,
     patterns: Query<(Entity, &Pattern, &Kinematics)>,
     mut forces: Query<(Entity, &mut Force)>,
 ) {
+    if !timer.0.just_finished() {
+        return;
+    }
+
     let force = 2000.;
     for (r_e, rewrite, rewrite_kin) in rewrites.iter() {
         if rewrite.is_primitive() {
@@ -1416,7 +1449,7 @@ fn attract_matching_patterns_and_rewrites(
             let dist = delta.length();
             if dist > 1e-6 {
                 let force_vec = if rewrite.0.unify(pattern, &mut image).is_ok() {
-                    delta / dist.max(1.0).powf(2.0)
+                    delta / dist.max(100.0).powf(2.0)
                         * (force + (rewrite.0.complexity() as f32) * 10.0)
                 } else if dist < 400. {
                     -delta / (dist + 1.5).powf(2.0) * 1000.
@@ -1437,8 +1470,8 @@ fn step_ars(
     mut image: ResMut<Image>,
     materials: Res<Materials>,
     font: Res<ARSFont>,
-    rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
-    free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite, &BBox), With<Ars>>,
+    free_patterns: Query<(Entity, &Pattern, &BBox), With<Ars>>,
 ) {
     let mut spent_rewrites: BTreeSet<Entity> = Default::default();
 
@@ -1493,13 +1526,7 @@ fn step_ars(
                     bindings.get("pattern").cloned(),
                     bindings.get("rewrite").cloned(),
                 ) {
-                    let spawn_position =
-                        if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
-                            pat_bbox.center()
-                        } else {
-                            eprintln!("couldn't find rewrite entity: {:?}", rewrite_entity);
-                            Vec2::default()
-                        };
+                    let spawn_position = pattern_bbox.double_left();
                     spawn_rewrite(
                         &image,
                         spawn_position,
@@ -1514,13 +1541,7 @@ fn step_ars(
                     bindings.get("left").cloned(),
                     bindings.get("right").cloned(),
                 ) {
-                    let spawn_position =
-                        if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity) {
-                            pat_bbox.center()
-                        } else {
-                            eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
-                            Vec2::default()
-                        };
+                    let spawn_position = pattern_bbox.double_left();
 
                     spawn_pattern(
                         &image,
@@ -1540,13 +1561,7 @@ fn step_ars(
                     );
                 }
             } else {
-                let spawn_position = if let Ok((_, _, pat_bbox)) = free_patterns.get(pattern_entity)
-                {
-                    pat_bbox.center()
-                } else {
-                    eprintln!("couldn't find pattern entity: {:?}", pattern_entity);
-                    Vec2::default()
-                };
+                let spawn_position = pattern_bbox.double_left();
                 let mut rewritten_pattern = rewrite.1.clone();
                 rewritten_pattern.replace_holes(bindings);
                 commands.entity(rewrite_entity).despawn_recursive();
@@ -1570,8 +1585,8 @@ fn ars(
     commands: Commands,
     materials: Res<Materials>,
     font: Res<ARSFont>,
-    rewrites: Query<(Entity, &Rewrite, &BBox), With<ARS>>,
-    free_patterns: Query<(Entity, &Pattern, &BBox), With<ARS>>,
+    rewrites: Query<(Entity, &Rewrite, &BBox), With<Ars>>,
+    free_patterns: Query<(Entity, &Pattern, &BBox), With<Ars>>,
 ) {
     if !timer.0.tick(time.delta()).just_finished() {
         return;
