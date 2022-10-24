@@ -15,15 +15,15 @@ use bevy::prelude::*;
 use bevy::render::camera::Camera;
 use bevy::text::Text2dSize;
 use bevy::window::CursorMoved;
-use bevy_egui::{egui, EguiContext};
+use bevy_egui::{egui, EguiContext, EguiPlugin};
 use bevy_inspector_egui::WorldInspectorPlugin;
 use serde::{Deserialize, Serialize};
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugin(WorldInspectorPlugin::new())
-        // .add_plugin(EguiPlugin)
+        // .add_plugin(WorldInspectorPlugin::new())
+        .add_plugin(EguiPlugin)
         .add_startup_system(setup)
         .add_event::<CompileEvent>()
         .add_startup_stage("ars_setup", SystemStage::single(spawn_initial_state))
@@ -33,7 +33,7 @@ fn main() {
         .add_system(attract_matching_patterns_and_rewrites)
         .add_system(update_listener)
         .add_system(ars)
-        .add_system(persistence)
+        // .add_system(persistence)
         .add_system(ars_layout)
         .add_system(propagate_bboxes)
         .add_system(ars_term_bg)
@@ -1431,8 +1431,8 @@ fn keyboard_input_system(
 fn attract_matching_patterns_and_rewrites(
     mut image: ResMut<Image>,
     timer: Res<ARSTimer>,
-    rewrites: Query<(Entity, &Rewrite, &Kinematics)>,
-    patterns: Query<(Entity, &Pattern, &Kinematics)>,
+    rewrites: Query<(Entity, &Rewrite, &Kinematics, &BBox)>,
+    patterns: Query<(Entity, &Pattern, &Kinematics, &BBox)>,
     mut forces: Query<(Entity, &mut Force)>,
 ) {
     if !timer.0.just_finished() {
@@ -1440,12 +1440,12 @@ fn attract_matching_patterns_and_rewrites(
     }
 
     let force = 2000.;
-    for (r_e, rewrite, rewrite_kin) in rewrites.iter() {
+    for (r_e, rewrite, rewrite_kin, rewrite_bbox) in rewrites.iter() {
         if rewrite.is_primitive() {
             continue;
         }
-        for (p_e, pattern, pattern_kin) in patterns.iter() {
-            let delta = rewrite_kin.pos - pattern_kin.pos;
+        for (p_e, pattern, pattern_kin, pattern_bbox) in patterns.iter() {
+            let delta = rewrite_bbox.center() - pattern_bbox.center();
             let dist = delta.length();
             if dist > 1e-6 {
                 let force_vec = if rewrite.0.unify(pattern, &mut image).is_ok() {
